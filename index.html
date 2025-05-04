@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>2D Wave Simulation on WebGPU</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+
+<body>
+  <canvas id="canvas"></canvas>
+  <button id="toggleSettings">&gt;</button>
+  <div id="controls" class="right-dark">
+    <h2>2D Scalar Wave on WebGPU</h2>
+    <div class="control-group">
+      <div>
+        <select id="visualization">
+          <option value="wave">Wave</option>
+          <option value="speed">Speed</option>
+          <option value="end">End screen intensity</option>
+        </select>
+        <label for="visualization">Visualization mode</label>
+      </div>
+      <div>
+        <input id="boundaryAbsorb" type="checkbox" checked>
+        <label for="boundaryAbsorb">Nonreflective boundaries</label>
+      </div>
+      <div>
+        <input id="simSpeed" type="range" min="0" max="100" step="2" value="10">
+        <label for="simSpeed">Sim speed (dt/s):
+          <span id="simSpeedValue">10</span>
+        </label>
+      </div>
+      <button id="reinit" class="fullwidth">Restart sim</button>
+    </div>
+    <hr>
+    <div class="control-group">
+      <div>
+        <input id="planeWave" type="radio" name="waveType" checked>
+        <label for="planeWave">Plane wave</label>
+        <br>
+        <input id="pointSource" type="radio" name="waveType">
+        <label for="pointSource">Point source</label>
+      </div>
+      <div>
+        <input id="wavelength" type="range" min="4" max="100" step="2" value="20">
+        <label for="wavelength">Wavelength:
+          <span id="wavelengthValue">20</span>
+        </label>
+      </div>
+      <div>
+        <input id="amplitude" type="range" min="0" max="5" step="0.1" value="1">
+        <label for="amplitude">Amplitude:
+          <span id="amplitudeValue">1</span>
+        </label>
+      </div>
+    </div>
+    <hr>
+    <div class="control-group">
+      <div>
+        <select id="preset">
+          <option value="doubleSlit">Double slit</option>
+          <option value="ellipticalLens">Elliptical lens</option>
+          <option value="circularReflector">Circular reflector</option>
+          <option value="parabolicReflector">Parabolic reflector</option>
+        </select>
+        <label for="preset">Preset</label>
+      </div>
+      <div>
+        <div id="dsSettings" class="">
+          <input id="dsWidthSlider" type="range" min="0" max="100" step="2" value="10">
+          <label for="dsWidthSlider">Slit width:
+            <span id="dsWidthValue">10</span>
+          </label>
+          <input id="dsSpacingSlider" type="range" min="10" max="1000" step="2" value="200">
+          <label for="dsSpacingSlider">Slit spacing:
+            <span id="dsSpacingValue">200</span>
+          </label>
+        </div>
+        <div id="elSettings" class="">
+          <input id="elRadiusSlider" type="range" min="0" max="1000" step="10" value="300">
+          <label for="elRadiusSlider">Lens radius:
+            <span id="elRadiusValue">300</span>
+          </label>
+          <input id="elARSlider" type="range" min="1" max="10" step="1" value="8">
+          <label for="elARSlider">Aspect ratio:
+            <span id="elARValue">8</span>
+          </label>
+          <input id="elIRSlider" type="range" min="0.5" max="2.5" step="0.1" value="1.2">
+          <label for="elIRSlider">Refraction index:
+            <span id="elIRValue">1.2</span>
+          </label>
+        </div>
+        <div id="rSettings" class="">
+          <input id="rRadiusSlider" type="range" min="10" max="1000" step="2" value="1000">
+          <label for="rRadiusSlider">Width:
+            <span id="rRadiusValue">1000</span>
+          </label>
+          <br>
+          <input id="rDir" type="checkbox">
+          <label for="rDir">Reverse direction</label>
+        </div>
+        <input id="offsetLeftSlider" type="range" min="0" max="1000" step="2" value="200">
+        <label for="offsetLeftSlider">Offset from left:
+          <span id="offsetLeftValue">200</span>
+        </label>
+      </div>
+      <div>
+        <button id="loadPreset">Load</button>
+        <button id="clrLoadPreset">Clear & load</button>
+      </div>
+    </div>
+    <hr>
+    <div class="control-group">
+      <div>
+        <input id="drawnBarrierAbsorb" type="checkbox">
+        <label for="drawnBarrierAbsorb">New barriers absorb</label>
+      </div>
+      <div>
+        <label for="barrierUpload">Upload image</label>
+        <input id="barrierUpload" type="file" accept="image/*">
+      </div>
+      <div>
+        <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.5">
+        <label for="threshold">Threshold:
+          <span id="thresholdValue">0.50</span>
+        </label>
+      </div>
+      <div>
+        <input id="imageScale" type="range" min="0.1" max="1" step="0.01" value=".5">
+        <label for="imageScale">Image scale</label>
+      </div>
+      <div>
+        <input id="barrierInvert" type="checkbox">
+        <label for="barrierInvert">Invert image</label>
+      </div>
+      <div>
+        <button id="applyBarrierImage">Apply image</button>
+        <button id="clearBarriers">Clear barriers</button>
+      </div>
+    </div>
+    <p>Click on the canvas to toggle barriers</p>
+  </div>
+  <script type="module">
+    (async () => {
+      if (!navigator.gpu) {
+        document.body.textContent = "WebGPU is not supported in this browser.";
+        return;
+      }
+      const ui = {
+        panel: document.getElementById("controls"),
+        collapse: document.getElementById("toggleSettings"),
+        displayType: document.getElementById("visualization"),
+        reInit: document.getElementById("reinit"),
+        simSpeedSlider: document.getElementById("simSpeed"),
+        simSpeedValue: document.getElementById("simSpeedValue"),
+        imageUpload: document.getElementById("barrierUpload"),
+        thresholdSlider: document.getElementById("threshold"),
+        thresholdValue: document.getElementById("thresholdValue"),
+        imageApply: document.getElementById("applyBarrierImage"),
+        imageScale: document.getElementById("imageScale"),
+        barrierInvert: document.getElementById("barrierInvert"),
+        cClear: document.getElementById("clearBarriers"),
+        boundaryAbsorb: document.getElementById("boundaryAbsorb"),
+        wavelengthSlider: document.getElementById("wavelength"),
+        wavelengthValue: document.getElementById("wavelengthValue"),
+        amplitudeSlider: document.getElementById("amplitude"),
+        amplitudeValue: document.getElementById("amplitudeValue"),
+        drawnBarrierAbsorb: document.getElementById("drawnBarrierAbsorb"),
+        planeWave: document.getElementById("planeWave"),
+        pointSource: document.getElementById("pointSource"),
+        // preset settings
+        preset: document.getElementById("preset"),
+        offsetLeftSlider: document.getElementById("offsetLeftSlider"),
+        offsetLeftValue: document.getElementById("offsetLeftValue"),
+        dsSettings: document.getElementById("dsSettings"),
+        dsSpacingSlider: document.getElementById("dsSpacingSlider"),
+        dsSpacingValue: document.getElementById("dsSpacingValue"),
+        dsWidthSlider: document.getElementById("dsWidthSlider"),
+        dsWidthValue: document.getElementById("dsWidthValue"),
+        elSettings: document.getElementById("elSettings"),
+        elRadiusSlider: document.getElementById("elRadiusSlider"),
+        elRadiusValue: document.getElementById("elRadiusValue"),
+        elARSlider: document.getElementById("elARSlider"),
+        elARValue: document.getElementById("elARValue"),
+        elIRSlider: document.getElementById("elIRSlider"),
+        elIRValue: document.getElementById("elIRValue"),
+        rSettings: document.getElementById("rSettings"),
+        rRadiusSlider: document.getElementById("rRadiusSlider"),
+        rRadiusValue: document.getElementById("rRadiusValue"),
+        rDir: document.getElementById("rDir"),
+      };
+
+      let width = window.innerWidth;
+      let height = window.innerHeight;
+
+      // Simulation Parameters
+      let numCells = width * height;
+
+      let dtPerFrame = 10;
+      let dt = 0.1;//1 / Math.sqrt(2) - 1e-4; // < dx / c*sqrt2
+      let time = 0;
+
+      const initU = 1; // initial state of simulation domain
+      const initC = 1; // initial value of C
+
+
+      // WebGPU Setup
+      const canvas = document.getElementById("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const adapter = await navigator.gpu.requestAdapter();
+      const device = await adapter.requestDevice();
+      const context = canvas.getContext("webgpu");
+      const swapChainFormat = "bgra8unorm";
+      context.configure({
+        device: device,
+        format: swapChainFormat,
+      });
+
+      // Preset settings setup
+      ui.offsetLeftSlider.max = width;
+      ui.offsetLeftSlider.value = ui.offsetLeftValue.value = 200;
+      ui.dsSpacingSlider.max = ui.dsSpacingValue.textContent = height;
+      ui.dsSpacingSlider.value = ui.dsSpacingValue.textContent = 200;
+      ui.elRadiusSlider.max = height * 2;
+      ui.elRadiusValue.value = 300;
+      ui.rRadiusSlider.max = ui.rRadiusSlider.value = ui.rRadiusValue.textContent = height;
+
+      // Simulation Buffers
+      // current, previous, and next time step
+      const stateBufferSize = numCells * Float32Array.BYTES_PER_ELEMENT;
+      const stateBuffer0 = device.createBuffer({
+        size: stateBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        label: "state0"
+      });
+      const stateBuffer1 = device.createBuffer({
+        size: stateBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        label: "state1"
+      });
+      const stateBuffer2 = device.createBuffer({
+        size: stateBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        label: "state2"
+      });
+      // wave speeds
+      const cBuffer = device.createBuffer({
+        size: stateBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        label: "waveSpeed"
+      });
+
+      // Uniform Buffer
+      // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), slot0]
+      const uniformData = new Float32Array([width, height, dt, 0, time, 1, 20, 1, 0, 0]);
+      const uniformBuffer = device.createBuffer({
+        size: uniformData.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        label: "uniform"
+      });
+      device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
+
+      // Simulation Initialization
+
+      function resetState() {
+        const initialState = new Float32Array(numCells);
+        initialState.fill(initU);
+
+        device.queue.writeBuffer(stateBuffer0, 0, initialState.buffer);
+        device.queue.writeBuffer(stateBuffer1, 0, initialState.buffer);
+        device.queue.writeBuffer(stateBuffer2, 0, initialState.buffer);
+      }
+
+      function resetWaveSpeed() {
+        const initWaveSpeed = new Float32Array(numCells);
+        initWaveSpeed.fill(initC);
+        device.queue.writeBuffer(cBuffer, 0, initWaveSpeed.buffer);
+      }
+
+      function initializeState() {
+        resetState();
+
+        const initWaveSpeed = new Float32Array(numCells);
+        initWaveSpeed.fill(initC);
+        // totalReflection(initWaveSpeed);
+        doubleSlit(initWaveSpeed);
+
+        // ellipticalLens(initWaveSpeed, 4, 1.5);
+        // circularReflector(initWaveSpeed, height);
+        // parabolicReflector(initWaveSpeed);
+
+        device.queue.writeBuffer(cBuffer, 0, initWaveSpeed.buffer);
+      }
+      initializeState();
+
+      const computeShaderCode = `
+        struct Uniforms {
+          width: f32,
+          height: f32,
+          dt: f32,
+          display: f32,
+          time: f32, // may need a separate uniform for time
+          boundaryAbsorb: f32,
+          wavelength: f32,
+          amp: f32,
+          waveType: f32,
+          slot0: f32,
+        };
+        @group(0) @binding(0) var<storage, read> statePrev: array<f32>;
+        @group(0) @binding(1) var<storage, read> stateNow: array<f32>;
+        @group(0) @binding(2) var<storage, read_write> stateNext: array<f32>;
+        @group(0) @binding(3) var<storage, read> waveSpeed: array<f32>;
+        @group(0) @binding(4) var<uniform> uniforms: Uniforms;
+
+        @compute @workgroup_size(16, 16)
+        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+          let pi2 = 6.28f;
+          let x = i32(global_id.x);
+          let y = i32(global_id.y);
+          let width = i32(uniforms.width);
+          let height = i32(uniforms.height);
+          if (x >= width || y >= height) {return;}
+          let index = y * width + x;
+          let cdt = waveSpeed[index] * uniforms.dt;
+          let frac = (cdt - 1) / (cdt + 1);
+
+          let west = index - 1;
+          let east = index + 1;
+          let north = index - width;
+          let south = index + width;
+          let ne = north + 1;
+          let nw = north - 1;
+          let se = south + 1;
+          let sw = south - 1;
+
+          // let laplacian = (stateNow[east] + stateNow[west] + stateNow[south] + stateNow[north]
+          // - 4 * stateNow[index]);
+
+          let sixth = 1.0f / 6.0f;
+          let laplacian = (4 * sixth) * (stateNow[east] + stateNow[west] + stateNow[south] + stateNow[north])
+              + (sixth) * (stateNow[ne] + stateNow[nw] + stateNow[se] + stateNow[sw])
+              - (20 * sixth) * stateNow[index];
+
+
+          if ((uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {return;}
+
+          stateNext[index] = 2 * stateNow[index] - statePrev[index]
+            + cdt * cdt
+            * laplacian;
+
+          // absorbing boundaries - Mur's first order - right/left and c<0 barrier
+          // x boundaries
+          if (x == width - 1 || waveSpeed[east] < 0) {
+            stateNext[index] = stateNow[west]
+              + frac * (stateNext[west] - stateNow[index]);
+            return;
+          } else if (x == 0 || waveSpeed[west] < 0) {
+            stateNext[index] = stateNow[east]
+              + frac * (stateNext[east] - stateNow[index]);
+            return;
+          }
+          
+          // y boundaries - only when enabled
+          if (uniforms.boundaryAbsorb == 1 && (y >= height - 1 || y <= 0)) {
+            if (y == height - 1) {
+              stateNext[index] = stateNow[north]
+                + frac * (stateNext[north] - stateNow[index]);
+            } else if (y == 0) {
+              stateNext[index] = stateNow[south]
+                + frac * (stateNext[south] - stateNow[index]);
+            }
+            return;
+          }
+
+          // Wave generators
+          let waveGen = uniforms.amp * sin(uniforms.time * pi2 / uniforms.wavelength);
+          if (uniforms.waveType == 0 && x == 1) {
+            // plane wave
+            stateNext[index] = 1 + waveGen;
+          } else if (uniforms.waveType == 1 && x == 50 && y == height / 2) {
+            // point source
+            stateNext[index] = 1 + 10 * waveGen;
+          }
+
+          // old boundaries - reflective
+          //if ((x == width - 1 || x == 0) || (y == width - 1 || y == 0)) {return;}
+
+          //stateNext[index] = 0.999999 * (stateNext[index] - 1) + 1;
+        }
+      `;
+      const computeModule = device.createShaderModule({ code: computeShaderCode, label: "computeModule" });
+      const computePipeline = device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: computeModule, entryPoint: 'main' },
+        label: "computePipeline"
+      });
+      const computeBindGroup = (bufferPrev, bufferNow, bufferNext) => device.createBindGroup({
+        layout: computePipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: bufferPrev } },
+          { binding: 1, resource: { buffer: bufferNow } },
+          { binding: 2, resource: { buffer: bufferNext } },
+          { binding: 3, resource: { buffer: cBuffer } },
+          { binding: 4, resource: { buffer: uniformBuffer } },
+        ],
+        label: "computeBindGroup"
+      });
+
+      // Render Pipeline (Visualization)
+      const renderShaderCode = `
+        struct Uniforms {
+          width: f32,
+          height: f32,
+          dt: f32,
+          display: f32,
+          time: f32,
+          boundaryAbsorb: f32,
+          wavelength: f32,
+          amp: f32,
+          waveType: f32,
+          slot0: f32,
+        };
+        @group(0) @binding(0) var<storage, read> state: array<f32>;
+        @group(0) @binding(1) var<uniform> uniforms: Uniforms;
+        @group(0) @binding(2) var<storage, read> waveSpeed: array<f32>;
+
+        struct VertexOut {
+          @builtin(position) position: vec4<f32>,
+          @location(0) fragCoord: vec2<f32>,
+        };
+
+        @vertex
+        fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
+          var pos = array<vec2<f32>, 6>(
+            vec2<f32>(-1.0, -1.0),
+            vec2<f32>( 1.0, -1.0),
+            vec2<f32>(-1.0,  1.0),
+            vec2<f32>(-1.0,  1.0),
+            vec2<f32>( 1.0, -1.0),
+            vec2<f32>( 1.0,  1.0)
+          );
+          var output: VertexOut;
+          output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+          output.fragCoord = 0.5 * (pos[vertexIndex] + vec2<f32>(1.0)) * vec2<f32>(uniforms.width, uniforms.height);
+          return output;
+        }
+
+        fn colorMap(value:f32) -> vec3<f32> {
+          //return vec3<f32>(value, 1.0 - abs(value - 0.5), 1.0 - value); // rgb
+          return vec3<f32>(value - 1, abs(value - 1) / 2 - 0.5, 1 - value); // yrkbc
+        }
+
+        @fragment
+        fn fs_main(@location(0) fragCoord: vec2<f32>) -> @location(0) vec4<f32> {
+          let x = i32(fragCoord.x);
+          let y = i32(fragCoord.y);
+          let width = i32(uniforms.width);
+          let index = y * width + x;
+          
+          let west = index - 1;
+          let east = index + 1;
+          let north = index - width;
+          let south = index + width;
+          
+          // Render barriers and large changes in c
+          if ((waveSpeed[index] <= 0
+               || abs(waveSpeed[north] - waveSpeed[south]) > 0.02
+               || abs(waveSpeed[east] - waveSpeed[west]) > 0.02
+              ) && uniforms.display <= 1
+            ) {
+            return vec4<f32>(1.0);
+          }
+          if (uniforms.display == 0) {
+            return vec4<f32>(colorMap(state[index]), 1.0);
+          } else if (uniforms.display == 1) {
+            return vec4<f32>(colorMap(waveSpeed[index]), 1.0);
+          } else {
+            return vec4<f32>(colorMap(state[(y + 1) * width - 1]), 1.0);
+          }
+        }
+      `;
+      const renderModule = device.createShaderModule({ code: renderShaderCode, label: "renderModule" });
+      const renderPipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: renderModule, entryPoint: 'vs_main' },
+        fragment: { module: renderModule, entryPoint: 'fs_main', targets: [{ format: swapChainFormat }] },
+        primitive: { topology: 'triangle-list' },
+        label: "renderPipeline"
+      });
+      const renderBindGroup = (stateBufferForRender) => device.createBindGroup({
+        layout: renderPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: stateBufferForRender } },
+          { binding: 1, resource: { buffer: uniformBuffer } },
+          { binding: 2, resource: { buffer: cBuffer } },
+        ],
+        label: "renderBindGroup"
+      });
+
+      // create presets
+      // prisms
+      function totalReflection(cArray) {
+        for (let i = 400; i <= height - 400; i++) {
+          for (let j = -200; j < 100; j++) {
+            if (i == 400 || i == height - 400) {
+              cArray[width * i + i * 6 + j] = -1;
+              continue;
+            }
+            cArray[width * i + i*6+j] = .5;
+          }
+          for (let j = 100; j < 400; j++) {
+            if (i == 400 || i == height - 400) {
+              cArray[width * i + i * 6 + j] = -1;
+              continue;
+            }
+            cArray[width * i + i*6+j] = 2;
+          }
+        }
+      }
+      /**
+       * @param cArray wave speed array
+       * @param slitWidth width of the slit
+       * @param spacing spacing between slit centers
+       * @param offsetLeft distance from left boundary to center of lens
+       */
+      function doubleSlit(cArray, slitWidth = 10, spacing = 200, offsetLeft = 200) {
+        const halfSpacing = Math.round(spacing / 2);
+        const halfHeight = Math.round(height / 2);
+        const radius = Math.round(slitWidth / 2);
+        for (let i = -halfHeight; i < halfHeight; i++) {
+          if ((i < -halfSpacing - radius || i > -halfSpacing + radius)
+            && (i < halfSpacing - radius || i > halfSpacing + radius))
+            cArray[width * (i + halfHeight) + offsetLeft] = -1;
+        }
+      }
+
+      /**
+       * Elliptical lens generator
+       * @param cArray wave speed array
+       * @param aspectRatio ratio of height to width
+       * @param refractiveIndex ratio of external wave speed to internal wave speed
+       * @param r height of the lens
+       * @param offsetLeft distance from left boundary to center of lens
+       */
+      function ellipticalLens(cArray, aspectRatio = 4, refractiveIndex = 1.2, r = height / 4, offsetLeft = 300) {
+        for (let i = -height / 2; i < height / 2; i++) {
+          for (let j = -width / 2; j < width / 2; j++) {
+            if ((i * i + (aspectRatio * j) ** 2) < r ** 2)
+              cArray[width * (i + height / 2) + (j + offsetLeft)] = initC / refractiveIndex;
+          }
+        }
+      }
+
+      /**
+       * Parabolic reflector generator
+       * @param cArray wave speed array
+       * @param a width factor
+       * @param dir direction of concavity: 1 = concave, -1 = convex to incoming waves
+       * @param offsetLeft distance from left boundary to center of lens
+       */
+      function parabolicReflector(cArray, a = 40, dir = 1, offsetLeft = width - 400) {
+        for (let i = -height / 2; i < height / 2; i++) {
+          for (let j = -width / 2; j < width / 2; j++) {
+            if (Math.abs((i / a) ** 2 + dir * j) < 1)
+              cArray[width * (i + height / 2) + (j + offsetLeft)] = 0;
+          }
+        }
+      }
+      // circular reflector
+      function circularReflector(cArray, r = Math.ceil(height / 2), dir = 1, offsetLeft = dir * r + Math.ceil(width / 4)) {
+        for (let i = -height / 2; i < height / 2; i++) {
+          for (let j = -width / 2; j < width / 2; j++) {
+            if (Math.abs(i ** 2 + j ** 2 - r ** 2) <= r && dir * j >= 0)
+              cArray[width * (i + height / 2 + 1) + (j - offsetLeft)] = 0;
+          }
+        }
+      }
+
+
+      // Settings and interaction
+
+      ui.cClear.addEventListener("click", () => resetWaveSpeed());
+      ui.reInit.addEventListener("click", () => resetState());
+
+      ui.displayType.addEventListener("change", () => {
+        const mode = ui.displayType.value;
+        const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
+        uniformData[3] = modeVal;
+        device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
+      });
+
+
+      // Simulation speed
+      ui.simSpeedSlider.addEventListener("input", () => {
+        const v = parseInt(ui.simSpeedSlider.value);
+        ui.simSpeedValue.textContent = v;
+        dtPerFrame = v;
+      });
+
+      // ABC condition toggle
+      ui.boundaryAbsorb.addEventListener("click", () => {
+        uniformData[5] = ui.boundaryAbsorb.checked ? 1 : 0;
+        device.queue.writeBuffer(uniformBuffer, 5 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[5]]));
+      });
+
+      // Wave generator wavelength
+      ui.wavelengthSlider.addEventListener("input", () => {
+        const v = parseInt(ui.wavelengthSlider.value);
+        uniformData[6] = ui.wavelengthValue.textContent = v;
+        device.queue.writeBuffer(uniformBuffer, 6 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[6]]));
+      });
+      // Wave generator amplitude
+      ui.amplitudeSlider.addEventListener("input", () => {
+        const v = parseFloat(ui.amplitudeSlider.value);
+        uniformData[7] = ui.amplitudeValue.textContent = v;
+        device.queue.writeBuffer(uniformBuffer, 7 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[7]]));
+      });
+
+      // Wave generator types
+      ui.planeWave.addEventListener("input", () => {
+        uniformData[8] = 0;
+        device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+        resetState();
+      });
+      ui.pointSource.addEventListener("input", () => {
+        uniformData[8] = 1;
+        device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+        resetState();
+      });
+
+      // Barrier Setting (Mouse Click)
+      const cArray = new Float32Array(numCells);
+      cArray.fill(initC);
+
+
+      let isDrawing = false;
+      let newC = null;
+      canvas.addEventListener("mousedown", (event) => {
+        isDrawing = true;
+        placeBarrier(event);
+      });
+      canvas.addEventListener("pointermove", (event) => {
+        if (isDrawing) {
+          event.getCoalescedEvents().forEach((event) => placeBarrier(event));
+        }
+      });
+      canvas.addEventListener("mouseup", () => {
+        isDrawing = false;
+        newC = null;
+      });
+      function placeBarrier(event) {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor(event.clientX - rect.left);
+        // Flip y so that the top of the canvas is y=height-1.
+        const y = height - 1 - Math.floor(event.clientY - rect.top);
+        const index = y * width + x;
+        if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
+        cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
+        console.log(newC);
+        const offset = index * Float32Array.BYTES_PER_ELEMENT;
+        device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
+        device.queue.writeBuffer(stateBuffer0, offset, new Float32Array([initU]));
+        device.queue.writeBuffer(stateBuffer1, offset, new Float32Array([initU]));
+        device.queue.writeBuffer(stateBuffer2, offset, new Float32Array([initU]));
+      }
+
+      // Image Upload & Processing - untested
+      ui.thresholdSlider.addEventListener("input", () => {
+        const t = parseFloat(ui.thresholdSlider.value);
+        ui.thresholdValue.textContent = t.toFixed(2);
+      });
+      ui.imageApply.addEventListener("click", () => {
+        if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
+        resetWaveSpeed();
+        const file = ui.imageUpload.files[0];
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            // Get the UI scale factor.
+            const uiScale = parseFloat(ui.imageScale.value);
+            // Compute the maximum scale factor to fit the canvas.
+            const fitScale = Math.min(width / img.width, height / img.height);
+            // Final target size: original image scaled by fitScale and then by uiScale.
+            const targetWidth = Math.round(img.width * fitScale * uiScale);
+            const targetHeight = Math.round(img.height * fitScale * uiScale);
+            // Create offscreen canvas to draw the scaled image.
+            const offCanvas = document.createElement("canvas");
+            offCanvas.width = targetWidth;
+            offCanvas.height = targetHeight;
+            const offCtx = offCanvas.getContext("2d");
+            offCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
+            const imageData = offCtx.getImageData(0, 0, targetWidth, targetHeight);
+            // Compute offsets to center the barrier image in the simulation grid.
+            const offsetX = Math.floor((width - targetWidth) / 2);
+            const offsetY = Math.floor((height - targetHeight) / 2);
+            const threshold = parseFloat(ui.thresholdSlider.value);
+            // Update barrierArray: set to 1 for pixels with brightness above threshold.
+            for (let j = 0; j < targetHeight; j++) {
+              for (let i = 0; i < targetWidth; i++) {
+                const idx = ((targetHeight - j) * targetWidth + i) * 4;
+                // Compute normalized brightness (average of R, G, B).
+                const b = (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / (3 * 255);
+                const brightness = ui.barrierInvert.checked ? 1 - b : b;
+                if (brightness > threshold) {
+                  const simX = offsetX + i;
+                  const simY = offsetY + j;
+                  if (simX >= 0 && simX < width && simY >= 0 && simY < height) {
+                    cArray[simY * width + simX] = 0;
+                  }
+                }
+              }
+            }
+            device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+
+
+      // Simulation Loop
+      let [bufferPrev, bufferNow, bufferNext] = [stateBuffer0, stateBuffer1, stateBuffer2];
+      function frame() {
+        const commandEncoder = device.createCommandEncoder();
+        // update time for wave generators
+        for (let i = 0; i < dtPerFrame; i++) {
+          uniformData[4] += dt; // * simSpeed; // for updating outside the loop
+          device.queue.writeBuffer(uniformBuffer, 4 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[4]]));
+
+          const computePass = commandEncoder.beginComputePass();
+          computePass.setPipeline(computePipeline);
+          computePass.setBindGroup(0, computeBindGroup(bufferPrev, bufferNow, bufferNext));
+          computePass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+          computePass.end();
+
+          // rotate the buffers by 1 time step
+          [bufferPrev, bufferNow, bufferNext] = [bufferNow, bufferNext, bufferPrev];
+        }
+        const textureView = context.getCurrentTexture().createView();
+        const renderPass = commandEncoder.beginRenderPass({
+          colorAttachments: [{
+            view: textureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+        });
+        renderPass.setPipeline(renderPipeline);
+        renderPass.setBindGroup(0, renderBindGroup(bufferNext));
+        renderPass.draw(6, 1, 0, 0);
+        renderPass.end();
+
+        device.queue.submit([commandEncoder.finish()]);
+
+        //setTimeout(frame, 500);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+
+      // ---- Other event listeners ----
+      ui.collapse.onclick = () => {
+        ui.collapse.innerText = ui.collapse.innerText === ">" ? "<" : ">";
+        if (ui.panel.classList.contains("hidden")) {
+          ui.panel.classList.remove("hidden");
+        } else {
+          ui.panel.classList.add("hidden");
+        }
+      };
+      window.onresize = () => {
+        //if (window.innerWidth > canvas.width)
+        location.reload();
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        //refreshGrid();
+      }
+    })();
+  </script>
+</body>
+
+</html>
