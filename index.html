@@ -120,11 +120,11 @@
         <input id="barrierUpload" type="file" accept="image/*">
       </div>
       <div>
-        <input id="blackIRSlider" type="range" min="0" max="2.5" step="0.05" value="1">
+        <input id="blackIRSlider" type="range" min="0.5" max="2.5" step="0.05" value="1">
         <label for="blackIRSlider">Black refract:
           <span id="blackIRValue">1.00</span>
         </label>
-        <input id="whiteIRSlider" type="range" min="0" max="2.5" step="0.05" value="1.5">
+        <input id="whiteIRSlider" type="range" min="0.5" max="2.5" step="0.05" value="1.5">
         <label for="whiteIRSlider">White refract:
           <span id="whiteIRValue">1.50</span>
         </label>
@@ -136,6 +136,14 @@
       <div>
         <input id="barrierInvert" type="checkbox">
         <label for="barrierInvert">Invert image</label>
+      </div>
+      <div>
+        <input id="blockTop" type="checkbox">
+        <label for="blockTop">Block top</label>
+      </div>
+      <div>
+        <input id="blockBottom" type="checkbox">
+        <label for="blockBottom">Block bottom</label>
       </div>
       <div>
         <button id="applyBarrierImage">Apply image</button>
@@ -175,6 +183,8 @@
         planeWave: document.getElementById("planeWave"),
         pointSource: document.getElementById("pointSource"),
         waveToggle: document.getElementById("waveToggle"),
+        blockTop: document.getElementById("blockTop"),
+        blockBottom: document.getElementById("blockBottom"),
         // preset settings
         preset: document.getElementById("preset"),
         presetSettings: document.getElementById("presetSettings"),
@@ -494,8 +504,8 @@
           
           // Render barriers and large changes in c
           if ((waveSpeed[index] <= 0
-               || abs(waveSpeed[north] - waveSpeed[south]) > 0.03
-               || abs(waveSpeed[east] - waveSpeed[west]) > 0.03
+               || abs(waveSpeed[north] - waveSpeed[south]) > 0.02
+               || abs(waveSpeed[east] - waveSpeed[west]) > 0.02
               ) && uniforms.display <= 1
             ) {
             return vec4<f32>(1.0);
@@ -874,8 +884,10 @@
                   updateCell(
                     simX,
                     simY,
-                    (1 - brightness) * initC / parseFloat(ui.blackRefractSlider.value)
-                    + brightness * initC / parseFloat(ui.whiteRefractSlider.value)
+                    (ui.blockBottom.checked && j === 1 || ui.blockTop.checked && j === targetHeight - 1)
+                      ? -1
+                      : (1 - brightness) * initC / parseFloat(ui.blackRefractSlider.value)
+                      + brightness * initC / parseFloat(ui.whiteRefractSlider.value)
                   );
                 }
               }
