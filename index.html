@@ -101,7 +101,7 @@
           <input id="rDir" type="checkbox">
           <label for="rDir">Reverse direction</label>
         </div>
-        <input id="offsetLeftSlider" type="range" min="0" max="1000" step="2" value="200">
+        <input id="offsetLeftSlider" type="range" min="0" max="1000" step="1" value="200">
         <label for="offsetLeftSlider">Offset left:
           <span id="offsetLeftValue">200</span>
         </label>
@@ -120,13 +120,17 @@
         <input id="barrierUpload" type="file" accept="image/*">
       </div>
       <div>
-        <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.5">
-        <label for="threshold">Threshold:
-          <span id="thresholdValue">0.50</span>
+        <input id="blackIRSlider" type="range" min="0" max="2.5" step="0.05" value="1">
+        <label for="blackIRSlider">Black refract:
+          <span id="blackIRValue">1.00</span>
+        </label>
+        <input id="whiteIRSlider" type="range" min="0" max="2.5" step="0.05" value="1.5">
+        <label for="whiteIRSlider">White refract:
+          <span id="whiteIRValue">1.50</span>
         </label>
       </div>
       <div>
-        <input id="imageScale" type="range" min="0.1" max="1" step="0.01" value=".5">
+        <input id="imageScale" type="range" min="0.1" max="1" step="0.05" value=".5">
         <label for="imageScale">Image scale</label>
       </div>
       <div>
@@ -154,8 +158,10 @@
         simSpeedSlider: document.getElementById("simSpeed"),
         simSpeedValue: document.getElementById("simSpeedValue"),
         imageUpload: document.getElementById("barrierUpload"),
-        thresholdSlider: document.getElementById("threshold"),
-        thresholdValue: document.getElementById("thresholdValue"),
+        blackRefractSlider: document.getElementById("blackIRSlider"),
+        blackRefractValue: document.getElementById("blackIRValue"),
+        whiteRefractSlider: document.getElementById("whiteIRSlider"),
+        whiteRefractValue: document.getElementById("whiteIRValue"),
         imageApply: document.getElementById("applyBarrierImage"),
         imageScale: document.getElementById("imageScale"),
         barrierInvert: document.getElementById("barrierInvert"),
@@ -287,6 +293,9 @@
         device.queue.writeBuffer(stateBuffer0, 0, initialState.buffer);
         device.queue.writeBuffer(stateBuffer1, 0, initialState.buffer);
         device.queue.writeBuffer(stateBuffer2, 0, initialState.buffer);
+
+        uniformData[4] = 0;
+        device.queue.writeBuffer(uniformBuffer, 4 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[4]]));
       }
 
       function resetWaveSpeed() {
@@ -485,8 +494,8 @@
           
           // Render barriers and large changes in c
           if ((waveSpeed[index] <= 0
-               || abs(waveSpeed[north] - waveSpeed[south]) > 0.02
-               || abs(waveSpeed[east] - waveSpeed[west]) > 0.02
+               || abs(waveSpeed[north] - waveSpeed[south]) > 0.03
+               || abs(waveSpeed[east] - waveSpeed[west]) > 0.03
               ) && uniforms.display <= 1
             ) {
             return vec4<f32>(1.0);
@@ -541,6 +550,12 @@
         }
       }
 
+      /**
+       * Updates the wave speed of a cell
+       * @param x x coordinate
+       * @param y y coordinate
+       * @param value new value of c
+       */
       function updateCell(x, y, value) {
         if (x >= 0 && x < width && y >= 0 && y < height) {
           const index = y * width + x;
@@ -604,7 +619,12 @@
           }
         }
       }
-      // circular reflector
+      /**
+       * Circular reflector generator
+       * @param r radius
+       * @param dir direction of concavity: 1 = concave, -1 = convex to incoming waves
+       * @param offsetLeft distance from left boundary to center of lens
+       */
       function circularReflector(r = halfHeight, dir = 1, offsetLeft = Math.ceil(3 * width / 4)) {
         r = Math.ceil(r);
         for (let i = -r; i <= r; i++) {
@@ -619,155 +639,156 @@
 
 
       // Settings and interaction
+      {
+        ui.cClear.addEventListener("click", () => {
+          resetWaveSpeed();
+          activePreset = null;
+        });
+        ui.reInit.addEventListener("click", () => resetState());
 
-      ui.cClear.addEventListener("click", () => {
-        resetWaveSpeed();
-        activePreset = null;
-      });
-      ui.reInit.addEventListener("click", () => resetState());
-
-      ui.displayType.addEventListener("change", () => {
-        const mode = ui.displayType.value;
-        const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
-        uniformData[3] = modeVal;
-        device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
-      });
+        ui.displayType.addEventListener("change", () => {
+          const mode = ui.displayType.value;
+          const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
+          uniformData[3] = modeVal;
+          device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
+        });
 
 
-      // Simulation speed
-      ui.simSpeedSlider.addEventListener("input", () => {
-        ui.simSpeedValue.textContent = dtPerFrame = parseInt(ui.simSpeedSlider.value);
-      });
+        // Simulation speed
+        ui.simSpeedSlider.addEventListener("input", () => {
+          ui.simSpeedValue.textContent = dtPerFrame = parseInt(ui.simSpeedSlider.value);
+        });
 
-      // ABC condition toggle
-      ui.boundaryAbsorb.addEventListener("click", () => {
-        uniformData[5] = ui.boundaryAbsorb.checked ? 1 : 0;
-        device.queue.writeBuffer(uniformBuffer, 5 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[5]]));
-      });
+        // ABC condition toggle
+        ui.boundaryAbsorb.addEventListener("click", () => {
+          uniformData[5] = ui.boundaryAbsorb.checked ? 1 : 0;
+          device.queue.writeBuffer(uniformBuffer, 5 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[5]]));
+        });
 
-      // Wave generator wavelength
-      ui.wavelengthSlider.addEventListener("input", () => {
-        const v = parseInt(ui.wavelengthSlider.value);
-        uniformData[6] = ui.wavelengthValue.textContent = v;
-        device.queue.writeBuffer(uniformBuffer, 6 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[6]]));
-      });
-      // Wave generator amplitude
-      ui.amplitudeSlider.addEventListener("input", () => {
-        const v = parseFloat(ui.amplitudeSlider.value);
-        uniformData[7] = ui.amplitudeValue.textContent = v;
-        device.queue.writeBuffer(uniformBuffer, 7 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[7]]));
-      });
+        // Wave generator wavelength
+        ui.wavelengthSlider.addEventListener("input", () => {
+          const v = parseInt(ui.wavelengthSlider.value);
+          uniformData[6] = ui.wavelengthValue.textContent = v;
+          device.queue.writeBuffer(uniformBuffer, 6 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[6]]));
+        });
+        // Wave generator amplitude
+        ui.amplitudeSlider.addEventListener("input", () => {
+          const v = parseFloat(ui.amplitudeSlider.value);
+          uniformData[7] = ui.amplitudeValue.textContent = v;
+          device.queue.writeBuffer(uniformBuffer, 7 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[7]]));
+        });
 
-      // Wave generator types
-      ui.planeWave.addEventListener("input", () => {
-        uniformData[8] = 0;
-        device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
-        resetState();
-      });
-      ui.pointSource.addEventListener("input", () => {
-        uniformData[8] = 1;
-        device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
-        resetState();
-      });
+        // Wave generator types
+        ui.planeWave.addEventListener("input", () => {
+          uniformData[8] = 0;
+          device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+          resetState();
+        });
+        ui.pointSource.addEventListener("input", () => {
+          uniformData[8] = 1;
+          device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+          resetState();
+        });
 
-      // Toggle wave generator
-      ui.waveToggle.addEventListener("click", () => {
-        uniformData[9] = 1 - uniformData[9];
-        device.queue.writeBuffer(uniformBuffer, 9 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[9]]));
-      });
+        // Toggle wave generator
+        ui.waveToggle.addEventListener("click", () => {
+          uniformData[9] = 1 - uniformData[9];
+          device.queue.writeBuffer(uniformBuffer, 9 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[9]]));
+        });
 
-      // Preset settings
-      function updatePreset() {
-        resetWaveSpeed();
-        activePreset = Preset[ui.preset.value];
-        const ol = parseInt(ui.offsetLeftSlider.value);
-        switch (activePreset) {
-          case Preset.doubleSlit:
-            doubleSlit(
-              parseInt(ui.dsWidthSlider.value),
-              parseInt(ui.dsSpacingSlider.value),
-              ol
-            );
-            break;
-          case Preset.ellipticalLens:
-            ellipticalLens(
-              parseFloat(ui.elARSlider.value),
-              parseFloat(ui.elIRSlider.value),
-              parseInt(ui.elRadiusSlider.value),
-              ol
-            );
-            break;
-          case Preset.circularReflector:
-            ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
-            circularReflector(
-              parseInt(ui.rRadiusSlider.value),
-              parseInt(ui.rDir.checked ? -1 : 1),
-              ol
-            );
-            break;
-          case Preset.parabolicReflector:
-            ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
-            parabolicReflector(
-              parseInt(ui.rRadiusSlider.value),
-              parseInt(ui.rDir.checked ? -1 : 1),
-              ol
-            );
+        // Preset settings
+        function updatePreset() {
+          resetWaveSpeed();
+          const ol = parseInt(ui.offsetLeftSlider.value);
+          switch (activePreset) {
+            case Preset.doubleSlit:
+              doubleSlit(
+                parseInt(ui.dsWidthSlider.value),
+                parseInt(ui.dsSpacingSlider.value),
+                ol
+              );
+              break;
+            case Preset.ellipticalLens:
+              ellipticalLens(
+                parseFloat(ui.elARSlider.value),
+                parseFloat(ui.elIRSlider.value),
+                parseInt(ui.elRadiusSlider.value),
+                ol
+              );
+              break;
+            case Preset.circularReflector:
+              ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
+              circularReflector(
+                parseInt(ui.rRadiusSlider.value),
+                parseInt(ui.rDir.checked ? -1 : 1),
+                ol
+              );
+              break;
+            case Preset.parabolicReflector:
+              ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
+              parabolicReflector(
+                parseInt(ui.rRadiusSlider.value),
+                parseInt(ui.rDir.checked ? -1 : 1),
+                ol
+              );
+          }
+          device.queue.writeBuffer(cBuffer, 0, cArray);
         }
-        device.queue.writeBuffer(cBuffer, 0, cArray);
+
+        ui.preset.addEventListener("input", () => {
+          ui.dsSettings.classList.add("hidden");
+          ui.elSettings.classList.add("hidden");
+          ui.rSettings.classList.add("hidden");
+          switch (Preset[ui.preset.value]) {
+            case Preset.doubleSlit:
+              ui.dsSettings.classList.remove("hidden");
+              break;
+            case Preset.ellipticalLens:
+              ui.elSettings.classList.remove("hidden");
+              break;
+            case Preset.circularReflector:
+              ui.rSettings.classList.remove("hidden");
+              break;
+            case Preset.parabolicReflector:
+              ui.rSettings.classList.remove("hidden");
+              break;
+          }
+        });
+
+        ui.offsetLeftSlider.addEventListener("input", () => {
+          ui.offsetLeftValue.textContent = ui.offsetLeftSlider.value;
+          updatePreset();
+        });
+
+        ui.dsSpacingSlider.addEventListener("input", () => {
+          ui.dsSpacingValue.textContent = ui.dsSpacingSlider.value;
+          updatePreset();
+        });
+        ui.dsWidthSlider.addEventListener("input", () => {
+          ui.dsWidthValue.textContent = ui.dsWidthSlider.value;
+          updatePreset();
+        });
+        ui.elRadiusSlider.addEventListener("input", () => {
+          ui.elRadiusValue.textContent = ui.elRadiusSlider.value;
+          updatePreset();
+        });
+        ui.elARSlider.addEventListener("input", () => {
+          ui.elARValue.textContent = ui.elARSlider.value;
+          updatePreset();
+        });
+        ui.elIRSlider.addEventListener("input", () => {
+          ui.elIRValue.textContent = ui.elIRSlider.value;
+          updatePreset();
+        });
+        ui.rRadiusSlider.addEventListener("input", () => {
+          ui.rRadiusValue.textContent = ui.rRadiusSlider.value;
+          updatePreset();
+        });
+        ui.loadPreset.addEventListener("click", () => {
+          activePreset = Preset[ui.preset.value];
+          updatePreset();
+        });
       }
-
-      ui.preset.addEventListener("input", () => {
-        ui.dsSettings.classList.add("hidden");
-        ui.elSettings.classList.add("hidden");
-        ui.rSettings.classList.add("hidden");
-        switch (Preset[ui.preset.value]) {
-          case Preset.doubleSlit:
-            ui.dsSettings.classList.remove("hidden");
-            break;
-          case Preset.ellipticalLens:
-            ui.elSettings.classList.remove("hidden");
-            break;
-          case Preset.circularReflector:
-            ui.rSettings.classList.remove("hidden");
-            break;
-          case Preset.parabolicReflector:
-            ui.rSettings.classList.remove("hidden");
-            break;
-        }
-      });
-
-      ui.offsetLeftSlider.addEventListener("input", () => {
-        ui.offsetLeftValue.textContent = ui.offsetLeftSlider.value;
-        updatePreset();
-      });
-
-      ui.dsSpacingSlider.addEventListener("input", () => {
-        ui.dsSpacingValue.textContent = ui.dsSpacingSlider.value;
-        updatePreset();
-      });
-      ui.dsWidthSlider.addEventListener("input", () => {
-        ui.dsWidthValue.textContent = ui.dsWidthSlider.value;
-        updatePreset();
-      });
-      ui.elRadiusSlider.addEventListener("input", () => {
-        ui.elRadiusValue.textContent = ui.elRadiusSlider.value;
-        updatePreset();
-      });
-      ui.elARSlider.addEventListener("input", () => {
-        ui.elARValue.textContent = ui.elARSlider.value;
-        updatePreset();
-      });
-      ui.elIRSlider.addEventListener("input", () => {
-        ui.elIRValue.textContent = ui.elIRSlider.value;
-        updatePreset();
-      });
-      ui.rRadiusSlider.addEventListener("input", () => {
-        ui.rRadiusValue.textContent = ui.rRadiusSlider.value;
-        updatePreset();
-      });
-      ui.loadPreset.addEventListener("click", () => {
-        updatePreset();
-      });
 
 
       // ui.presetSettings.addEventListener("click", (event) => {
@@ -810,9 +831,11 @@
       }
 
       // Image Upload & Processing - untested
-      ui.thresholdSlider.addEventListener("input", () => {
-        const t = parseFloat(ui.thresholdSlider.value);
-        ui.thresholdValue.textContent = t.toFixed(2);
+      ui.blackRefractSlider.addEventListener("input", () => {
+        ui.blackRefractValue.textContent = parseFloat(ui.blackRefractSlider.value).toFixed(2);
+      });
+      ui.whiteRefractSlider.addEventListener("input", () => {
+        ui.whiteRefractValue.textContent = parseFloat(ui.whiteRefractSlider.value).toFixed(2);
       });
       ui.imageApply.addEventListener("click", () => {
         if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
@@ -839,20 +862,21 @@
             // Compute offsets to center the barrier image in the simulation grid.
             const offsetX = Math.floor((width - targetWidth) / 2);
             const offsetY = Math.floor((height - targetHeight) / 2);
-            const threshold = parseFloat(ui.thresholdSlider.value);
-            // Update barrierArray: set to 1 for pixels with brightness above threshold.
-            for (let j = 0; j < targetHeight; j++) {
+            for (let j = 1; j < targetHeight; j++) { // unstable with j = 0
               for (let i = 0; i < targetWidth; i++) {
                 const idx = ((targetHeight - j) * targetWidth + i) * 4;
                 // Compute normalized brightness (average of R, G, B).
                 const b = (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / (3 * 255);
                 const brightness = ui.barrierInvert.checked ? 1 - b : b;
-                if (brightness > threshold) {
-                  const simX = offsetX + i;
-                  const simY = offsetY + j;
-                  if (simX >= 0 && simX < width && simY >= 0 && simY < height) {
-                    cArray[simY * width + simX] = 0;
-                  }
+                const simX = offsetX + i;
+                const simY = offsetY + j;
+                if (simX >= 0 && simX < width && simY >= 0 && simY < height) {
+                  updateCell(
+                    simX,
+                    simY,
+                    (1 - brightness) * initC / parseFloat(ui.blackRefractSlider.value)
+                    + brightness * initC / parseFloat(ui.whiteRefractSlider.value)
+                  );
                 }
               }
             }
