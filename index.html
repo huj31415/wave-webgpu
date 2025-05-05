@@ -27,7 +27,7 @@
       </div>
       <div>
         <input id="simSpeed" type="range" min="0" max="100" step="2" value="10">
-        <label for="simSpeed">Sim speed (dt/s):
+        <label for="simSpeed">dt per frame:
           <span id="simSpeedValue">10</span>
         </label>
       </div>
@@ -57,7 +57,7 @@
       <button id="waveToggle" class="fullwidth">Toggle wave generator</button>
     </div>
     <hr>
-    <div class="control-group">
+    <div class="control-group" id="presetSettings">
       <div>
         <select id="preset">
           <option value="doubleSlit">Double slit</option>
@@ -83,7 +83,7 @@
           <label for="elRadiusSlider">Lens radius:
             <span id="elRadiusValue">300</span>
           </label>
-          <input id="elARSlider" type="range" min="1" max="10" step="1" value="8">
+          <input id="elARSlider" type="range" min="1" max="10" step=".1" value="8">
           <label for="elARSlider">Aspect ratio:
             <span id="elARValue">8</span>
           </label>
@@ -102,14 +102,12 @@
           <label for="rDir">Reverse direction</label>
         </div>
         <input id="offsetLeftSlider" type="range" min="0" max="1000" step="2" value="200">
-        <label for="offsetLeftSlider">Offset from left:
+        <label for="offsetLeftSlider">Offset left:
           <span id="offsetLeftValue">200</span>
         </label>
-      </div>
-      <div>
-        <button id="loadPreset" class="fullwidth">Load preset</button>
         <!-- <button id="clrLoadPreset">Clear & load</button> -->
       </div>
+      <button id="loadPreset" class="fullwidth">Load preset</button>
     </div>
     <hr>
     <div class="control-group">
@@ -173,6 +171,7 @@
         waveToggle: document.getElementById("waveToggle"),
         // preset settings
         preset: document.getElementById("preset"),
+        presetSettings: document.getElementById("presetSettings"),
         loadPreset: document.getElementById("loadPreset"),
         offsetLeftSlider: document.getElementById("offsetLeftSlider"),
         offsetLeftValue: document.getElementById("offsetLeftValue"),
@@ -231,8 +230,8 @@
         parabolicReflector: 3,
       };
       let activePreset = Preset[ui.preset.value];
-      
-      ui.offsetLeftSlider.max = width;
+
+      ui.offsetLeftSlider.max = width - 1;
       ui.offsetLeftSlider.value = ui.offsetLeftValue.value = 200;
       ui.dsSpacingSlider.max = ui.dsSpacingValue.textContent = height;
       ui.dsSpacingSlider.value = ui.dsSpacingValue.textContent = 200;
@@ -265,6 +264,10 @@
         label: "waveSpeed"
       });
 
+      // wave speed array for updating
+      const cArray = new Float32Array(numCells);
+      cArray.fill(initC);
+
       // Uniform Buffer
       // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), waveOn]
       const uniformData = new Float32Array([width, height, dt, 0, time, 1, 20, 1, 0, 1]);
@@ -287,24 +290,22 @@
       }
 
       function resetWaveSpeed() {
-        const initWaveSpeed = new Float32Array(numCells);
-        initWaveSpeed.fill(initC);
-        device.queue.writeBuffer(cBuffer, 0, initWaveSpeed.buffer);
+        cArray.fill(initC);
+        device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
       }
 
       function initializeState() {
         resetState();
 
-        const initWaveSpeed = new Float32Array(numCells);
-        initWaveSpeed.fill(initC);
+        cArray.fill(initC);
         // totalReflection(initWaveSpeed);
-        doubleSlit(initWaveSpeed);
+        doubleSlit();
 
         // ellipticalLens(initWaveSpeed, 4, 1.2);
         // circularReflector(initWaveSpeed, height);
         // parabolicReflector(initWaveSpeed);
 
-        device.queue.writeBuffer(cBuffer, 0, initWaveSpeed.buffer);
+        device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
       }
       initializeState();
 
@@ -517,82 +518,100 @@
         label: "renderBindGroup"
       });
 
+      // Presets
+
       // create presets
       // prisms
-      function totalReflection(cArray) {
+      function totalReflection() {
         for (let i = 400; i <= height - 400; i++) {
           for (let j = -200; j < 100; j++) {
             if (i == 400 || i == height - 400) {
               cArray[width * i + i * 6 + j] = -1;
               continue;
             }
-            cArray[width * i + i*6+j] = .5;
+            cArray[width * i + i * 6 + j] = .5;
           }
           for (let j = 100; j < 400; j++) {
             if (i == 400 || i == height - 400) {
               cArray[width * i + i * 6 + j] = -1;
               continue;
             }
-            cArray[width * i + i*6+j] = 2;
+            cArray[width * i + i * 6 + j] = 2;
           }
         }
       }
+
+      function updateCell(x, y, value) {
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+          const index = y * width + x;
+          cArray[index] = value;
+          if (value <= 0) {
+            const offset = index * Float32Array.BYTES_PER_ELEMENT;
+            device.queue.writeBuffer(stateBuffer0, offset, new Float32Array([initU]));
+            device.queue.writeBuffer(stateBuffer1, offset, new Float32Array([initU]));
+            device.queue.writeBuffer(stateBuffer2, offset, new Float32Array([initU]));
+          }
+        }
+      }
+
       /**
-       * @param cArray wave speed array
        * @param slitWidth width of the slit
        * @param spacing spacing between slit centers
        * @param offsetLeft distance from left boundary to center of lens
        */
-      function doubleSlit(cArray, slitWidth = 10, spacing = 200, offsetLeft = 200) {
+      function doubleSlit(slitWidth = 10, spacing = 200, offsetLeft = 200) {
         const halfSpacing = Math.round(spacing / 2);
         const radius = Math.round(slitWidth / 2);
         for (let i = -halfHeight; i < halfHeight; i++) {
           if ((i < -halfSpacing - radius || i > -halfSpacing + radius)
             && (i < halfSpacing - radius || i > halfSpacing + radius))
-            cArray[width * (i + halfHeight) + offsetLeft] = -1;
+            updateCell(offsetLeft, i + halfHeight, -1);
         }
       }
 
       /**
        * Elliptical lens generator
-       * @param cArray wave speed array
        * @param aspectRatio ratio of height to width
        * @param refractiveIndex ratio of external wave speed to internal wave speed
        * @param r height of the lens
        * @param offsetLeft distance from left boundary to center of lens
        */
-      function ellipticalLens(cArray, aspectRatio = 4, refractiveIndex = 1.2, r = height / 4, offsetLeft = 300) {
+      function ellipticalLens(aspectRatio = 4, refractiveIndex = 1.2, r = height / 4, offsetLeft = 300) {
         r = Math.ceil(r);
+        const newC = initC / refractiveIndex;
         for (let i = -halfHeight; i < halfHeight; i++) {
           for (let j = -halfWidth; j < halfWidth; j++) {
             if ((i * i + (aspectRatio * j) ** 2) < r ** 2)
-              cArray[width * (i + halfHeight) + (j + offsetLeft)] = initC / refractiveIndex;
+              updateCell(j + offsetLeft, i + halfHeight, newC);
+            // cArray[width * (i + halfHeight) + (j + offsetLeft)] = newC;
           }
         }
       }
 
       /**
        * Parabolic reflector generator
-       * @param cArray wave speed array
        * @param a width factor
        * @param dir direction of concavity: 1 = concave, -1 = convex to incoming waves
        * @param offsetLeft distance from left boundary to center of lens
        */
-      function parabolicReflector(cArray, a = 40, dir = 1, offsetLeft = width - 400) {
+      function parabolicReflector(a = 1000, dir = 1, offsetLeft = width - 400) {
+        a = Math.round(a / 25);
         for (let i = -halfHeight; i < halfHeight; i++) {
           for (let j = -halfWidth; j < halfWidth; j++) {
             if (Math.abs((i / a) ** 2 + dir * j) < 1)
-              cArray[width * (i + halfHeight) + (j + offsetLeft)] = 0;
+              updateCell(j + offsetLeft, i + halfHeight, 0);
+            // cArray[width * (i + halfHeight) + (j + offsetLeft)] = 0;
           }
         }
       }
       // circular reflector
-      function circularReflector(cArray, r = halfHeight, dir = 1, offsetLeft = -dir * Math.ceil(r) - Math.ceil(width / 4)) {
+      function circularReflector(r = halfHeight, dir = 1, offsetLeft = Math.ceil(3 * width / 4)) {
         r = Math.ceil(r);
         for (let i = -r; i <= r; i++) {
           for (let j = -r; j <= r; j++) {
             if (Math.abs(i ** 2 + j ** 2 - r ** 2) <= r && dir * j >= 0) {
-              cArray[width * (i + halfHeight) + (j + offsetLeft)] = 0;
+              updateCell(j - dir * r + offsetLeft, i + halfHeight, 0);
+              // cArray[width * (i + halfHeight) + (j - dir * r + offsetLeft)] = 0;
             }
           }
         }
@@ -617,9 +636,7 @@
 
       // Simulation speed
       ui.simSpeedSlider.addEventListener("input", () => {
-        const v = parseInt(ui.simSpeedSlider.value);
-        ui.simSpeedValue.textContent = v;
-        dtPerFrame = v;
+        ui.simSpeedValue.textContent = dtPerFrame = parseInt(ui.simSpeedSlider.value);
       });
 
       // ABC condition toggle
@@ -660,12 +677,50 @@
       });
 
       // Preset settings
-      ui.preset.addEventListener("input", () => {
+      function updatePreset() {
+        resetWaveSpeed();
         activePreset = Preset[ui.preset.value];
+        const ol = parseInt(ui.offsetLeftSlider.value);
+        switch (activePreset) {
+          case Preset.doubleSlit:
+            doubleSlit(
+              parseInt(ui.dsWidthSlider.value),
+              parseInt(ui.dsSpacingSlider.value),
+              ol
+            );
+            break;
+          case Preset.ellipticalLens:
+            ellipticalLens(
+              parseFloat(ui.elARSlider.value),
+              parseFloat(ui.elIRSlider.value),
+              parseInt(ui.elRadiusSlider.value),
+              ol
+            );
+            break;
+          case Preset.circularReflector:
+            ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
+            circularReflector(
+              parseInt(ui.rRadiusSlider.value),
+              parseInt(ui.rDir.checked ? -1 : 1),
+              ol
+            );
+            break;
+          case Preset.parabolicReflector:
+            ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
+            parabolicReflector(
+              parseInt(ui.rRadiusSlider.value),
+              parseInt(ui.rDir.checked ? -1 : 1),
+              ol
+            );
+        }
+        device.queue.writeBuffer(cBuffer, 0, cArray);
+      }
+
+      ui.preset.addEventListener("input", () => {
         ui.dsSettings.classList.add("hidden");
         ui.elSettings.classList.add("hidden");
         ui.rSettings.classList.add("hidden");
-        switch (activePreset) {
+        switch (Preset[ui.preset.value]) {
           case Preset.doubleSlit:
             ui.dsSettings.classList.remove("hidden");
             break;
@@ -681,10 +736,48 @@
         }
       });
 
+      ui.offsetLeftSlider.addEventListener("input", () => {
+        ui.offsetLeftValue.textContent = ui.offsetLeftSlider.value;
+        updatePreset();
+      });
+
+      ui.dsSpacingSlider.addEventListener("input", () => {
+        ui.dsSpacingValue.textContent = ui.dsSpacingSlider.value;
+        updatePreset();
+      });
+      ui.dsWidthSlider.addEventListener("input", () => {
+        ui.dsWidthValue.textContent = ui.dsWidthSlider.value;
+        updatePreset();
+      });
+      ui.elRadiusSlider.addEventListener("input", () => {
+        ui.elRadiusValue.textContent = ui.elRadiusSlider.value;
+        updatePreset();
+      });
+      ui.elARSlider.addEventListener("input", () => {
+        ui.elARValue.textContent = ui.elARSlider.value;
+        updatePreset();
+      });
+      ui.elIRSlider.addEventListener("input", () => {
+        ui.elIRValue.textContent = ui.elIRSlider.value;
+        updatePreset();
+      });
+      ui.rRadiusSlider.addEventListener("input", () => {
+        ui.rRadiusValue.textContent = ui.rRadiusSlider.value;
+        updatePreset();
+      });
+      ui.loadPreset.addEventListener("click", () => {
+        updatePreset();
+      });
+
+
+      // ui.presetSettings.addEventListener("click", (event) => {
+      //   if (event.target.tagName === "INPUT" || event.target.tagName === "BUTTON" || event.target === ui.loadPreset) {
+      //     updatePreset();
+      //   }
+      // });
+
 
       // Barrier Setting (Mouse Click)
-      const cArray = new Float32Array(numCells);
-      cArray.fill(initC);
 
 
       let isDrawing = false;
@@ -705,12 +798,10 @@
       function placeBarrier(event) {
         const rect = canvas.getBoundingClientRect();
         const x = Math.floor(event.clientX - rect.left);
-        // Flip y so that the top of the canvas is y=height-1.
-        const y = height - 1 - Math.floor(event.clientY - rect.top);
+        const y = height - Math.floor(event.clientY - rect.top);
         const index = y * width + x;
         if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
         cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
-        console.log(newC);
         const offset = index * Float32Array.BYTES_PER_ELEMENT;
         device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
         device.queue.writeBuffer(stateBuffer0, offset, new Float32Array([initU]));
