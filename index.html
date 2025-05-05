@@ -83,11 +83,11 @@
           <label for="elRadiusSlider">Lens radius:
             <span id="elRadiusValue">300</span>
           </label>
-          <input id="elARSlider" type="range" min="1" max="10" step=".1" value="8">
+          <input id="elARSlider" type="range" min="1" max="10" step=".1" value="4">
           <label for="elARSlider">Aspect ratio:
-            <span id="elARValue">8</span>
+            <span id="elARValue">4</span>
           </label>
-          <input id="elIRSlider" type="range" min="0.5" max="2.5" step="0.1" value="1.2">
+          <input id="elIRSlider" type="range" min="0.25" max="4" step="0.05" value="1.2">
           <label for="elIRSlider">Refraction index:
             <span id="elIRValue">1.2</span>
           </label>
@@ -120,11 +120,11 @@
         <input id="barrierUpload" type="file" accept="image/*">
       </div>
       <div>
-        <input id="blackIRSlider" type="range" min="0.5" max="2.5" step="0.05" value="1">
+        <input id="blackIRSlider" type="range" min="0.25" max="4" step="0.05" value="1">
         <label for="blackIRSlider">Black refract:
           <span id="blackIRValue">1.00</span>
         </label>
-        <input id="whiteIRSlider" type="range" min="0.5" max="2.5" step="0.05" value="1.5">
+        <input id="whiteIRSlider" type="range" min="0.25" max="4" step="0.05" value="1.5">
         <label for="whiteIRSlider">White refract:
           <span id="whiteIRValue">1.50</span>
         </label>
@@ -158,7 +158,7 @@
         document.body.textContent = "WebGPU is not supported in this browser.";
         return;
       }
-      const ui = {
+      const ui = Object.freeze({
         panel: document.getElementById("controls"),
         collapse: document.getElementById("toggleSettings"),
         displayType: document.getElementById("visualization"),
@@ -207,7 +207,7 @@
         rRadiusSlider: document.getElementById("rRadiusSlider"),
         rRadiusValue: document.getElementById("rRadiusValue"),
         rDir: document.getElementById("rDir"),
-      };
+      });
 
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -221,9 +221,12 @@
       let dt = 0.1;//1 / Math.sqrt(2) - 1e-4; // < dx / c*sqrt2
       let time = 0;
 
-      const initU = 1; // initial state of simulation domain
+      const initU = 0; // initial state of simulation domain
       const initC = 1; // initial value of C
 
+      let waveOn = true;
+      const decayRate = 0.1; // decay rate when wave is disabled
+      let ampVal = 1;
 
       // WebGPU Setup
       const canvas = document.getElementById("canvas");
@@ -239,12 +242,13 @@
       });
 
       // Preset setup
-      const Preset = {
+      const Preset = Object.freeze({
         doubleSlit: 0,
         ellipticalLens: 1,
         circularReflector: 2,
         parabolicReflector: 3,
-      };
+      });
+
       let activePreset = Preset[ui.preset.value];
 
       ui.offsetLeftSlider.max = width - 1;
@@ -286,6 +290,16 @@
 
       // Uniform Buffer
       // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), waveOn]
+      const Uwidth = 0;
+      const Uheight = 1;
+      const Udt = 2;
+      const Udisplay = 3;
+      const Utime = 4;
+      const UboundaryAbsorb = 5;
+      const Uwavelength = 6;
+      const Uamp = 7;
+      const Utype = 8;
+      const UwaveOn = 9;
       const uniformData = new Float32Array([width, height, dt, 0, time, 1, 20, 1, 0, 1]);
       const uniformBuffer = device.createBuffer({
         size: uniformData.byteLength,
@@ -296,16 +310,19 @@
 
       // Simulation Initialization
 
+      function writeWaveState(f32offset, array) {
+        device.queue.writeBuffer(stateBuffer0, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
+        device.queue.writeBuffer(stateBuffer1, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
+        device.queue.writeBuffer(stateBuffer2, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
+      }
+
       function resetState() {
         const initialState = new Float32Array(numCells);
         initialState.fill(initU);
 
-        device.queue.writeBuffer(stateBuffer0, 0, initialState.buffer);
-        device.queue.writeBuffer(stateBuffer1, 0, initialState.buffer);
-        device.queue.writeBuffer(stateBuffer2, 0, initialState.buffer);
+        writeWaveState(0, initialState);
 
-        uniformData[4] = 0;
-        device.queue.writeBuffer(uniformBuffer, 4 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[4]]));
+        uniformData[Utime] = 0;
       }
 
       function resetWaveSpeed() {
@@ -412,14 +429,11 @@
             let waveGen = uniforms.amp * sin(uniforms.time * pi2 / uniforms.wavelength);
             if (uniforms.waveType == 0 && x == 1) {
               // plane wave
-              stateNext[index] = 1 + waveGen;
+              stateNext[index] = waveGen;
             } else if (uniforms.waveType == 1 && x == 50 && y == height / 2) {
               // point source
-              stateNext[index] = 1 + 10 * waveGen;
+              stateNext[index] = 10 * waveGen;
             }
-          } else if (x == 1) {
-              // reset plane wave
-              stateNext[index] = 1;
           }
 
           // old boundaries - reflective
@@ -487,7 +501,7 @@
 
         fn colorMap(value:f32) -> vec3<f32> {
           //return vec3<f32>(value, 1.0 - abs(value - 0.5), 1.0 - value); // rgb
-          return vec3<f32>(value - 1, abs(value - 1) / 2 - 0.5, 1 - value); // yrkbc
+          return vec3<f32>(value, abs(value) / 2 - 0.5, -value); // yrkbc
         }
 
         @fragment
@@ -510,10 +524,11 @@
             ) {
             return vec4<f32>(1.0);
           }
+          // Display wave state
           if (uniforms.display == 0) {
             return vec4<f32>(colorMap(state[index]), 1.0);
           } else if (uniforms.display == 1) {
-            return vec4<f32>(colorMap(waveSpeed[index]), 1.0);
+            return vec4<f32>(colorMap(waveSpeed[index] - 1), 1.0);
           } else {
             return vec4<f32>(colorMap(state[(y + 1) * width - 1]), 1.0);
           }
@@ -571,10 +586,7 @@
           const index = y * width + x;
           cArray[index] = value;
           if (value <= 0) {
-            const offset = index * Float32Array.BYTES_PER_ELEMENT;
-            device.queue.writeBuffer(stateBuffer0, offset, new Float32Array([initU]));
-            device.queue.writeBuffer(stateBuffer1, offset, new Float32Array([initU]));
-            device.queue.writeBuffer(stateBuffer2, offset, new Float32Array([initU]));
+            writeWaveState(index, new Float32Array([initU]));
           }
         }
       }
@@ -623,7 +635,7 @@
         a = Math.round(a / 25);
         for (let i = -halfHeight; i < halfHeight; i++) {
           for (let j = -halfWidth; j < halfWidth; j++) {
-            if (Math.abs((i / a) ** 2 + dir * j) < 1)
+            if (Math.abs((i / a) ** 2 + dir * j) < 32 / a)
               updateCell(j + offsetLeft, i + halfHeight, 0);
             // cArray[width * (i + halfHeight) + (j + offsetLeft)] = 0;
           }
@@ -659,7 +671,7 @@
         ui.displayType.addEventListener("change", () => {
           const mode = ui.displayType.value;
           const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
-          uniformData[3] = modeVal;
+          uniformData[Udisplay] = modeVal;
           device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
         });
 
@@ -671,39 +683,42 @@
 
         // ABC condition toggle
         ui.boundaryAbsorb.addEventListener("click", () => {
-          uniformData[5] = ui.boundaryAbsorb.checked ? 1 : 0;
-          device.queue.writeBuffer(uniformBuffer, 5 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[5]]));
+          uniformData[UboundaryAbsorb] = ui.boundaryAbsorb.checked ? 1 : 0;
         });
 
         // Wave generator wavelength
         ui.wavelengthSlider.addEventListener("input", () => {
           const v = parseInt(ui.wavelengthSlider.value);
-          uniformData[6] = ui.wavelengthValue.textContent = v;
-          device.queue.writeBuffer(uniformBuffer, 6 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[6]]));
+          uniformData[Uwavelength] = ui.wavelengthValue.textContent = v;
         });
         // Wave generator amplitude
         ui.amplitudeSlider.addEventListener("input", () => {
           const v = parseFloat(ui.amplitudeSlider.value);
-          uniformData[7] = ui.amplitudeValue.textContent = v;
-          device.queue.writeBuffer(uniformBuffer, 7 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[7]]));
+          uniformData[Uamp] = ui.amplitudeValue.textContent = v;
+          ampVal = parseFloat(ui.amplitudeSlider.value);
         });
 
         // Wave generator types
         ui.planeWave.addEventListener("input", () => {
-          uniformData[8] = 0;
-          device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+          uniformData[Utype] = 0;
           resetState();
         });
         ui.pointSource.addEventListener("input", () => {
-          uniformData[8] = 1;
-          device.queue.writeBuffer(uniformBuffer, 8 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[8]]));
+          uniformData[Utype] = 1;
           resetState();
         });
 
         // Toggle wave generator
         ui.waveToggle.addEventListener("click", () => {
-          uniformData[9] = 1 - uniformData[9];
-          device.queue.writeBuffer(uniformBuffer, 9 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[9]]));
+          waveOn = !waveOn;
+
+          if (waveOn) {
+            uniformData[Utime] = 0;
+            uniformData[UwaveOn] = 1 - uniformData[UwaveOn];
+            if (uniformData[Uamp] < ampVal) {
+              uniformData[Uamp] = ampVal;
+            }
+          }
         });
 
         // Preset settings
@@ -727,7 +742,6 @@
               );
               break;
             case Preset.circularReflector:
-              ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
               circularReflector(
                 parseInt(ui.rRadiusSlider.value),
                 parseInt(ui.rDir.checked ? -1 : 1),
@@ -735,7 +749,6 @@
               );
               break;
             case Preset.parabolicReflector:
-              ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
               parabolicReflector(
                 parseInt(ui.rRadiusSlider.value),
                 parseInt(ui.rDir.checked ? -1 : 1),
@@ -796,16 +809,11 @@
         });
         ui.loadPreset.addEventListener("click", () => {
           activePreset = Preset[ui.preset.value];
+          if (activePreset === Preset.circularReflector || activePreset === Preset.parabolicReflector)
+            ui.offsetLeftSlider.value = ui.offsetLeftValue.textContent = halfWidth;
           updatePreset();
         });
       }
-
-
-      // ui.presetSettings.addEventListener("click", (event) => {
-      //   if (event.target.tagName === "INPUT" || event.target.tagName === "BUTTON" || event.target === ui.loadPreset) {
-      //     updatePreset();
-      //   }
-      // });
 
 
       // Barrier Setting (Mouse Click)
@@ -835,12 +843,10 @@
         cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
         const offset = index * Float32Array.BYTES_PER_ELEMENT;
         device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
-        device.queue.writeBuffer(stateBuffer0, offset, new Float32Array([initU]));
-        device.queue.writeBuffer(stateBuffer1, offset, new Float32Array([initU]));
-        device.queue.writeBuffer(stateBuffer2, offset, new Float32Array([initU]));
+        writeWaveState(index, new Float32Array([initU]));
       }
 
-      // Image Upload & Processing - untested
+      // Image Upload & Processing
       ui.blackRefractSlider.addEventListener("input", () => {
         ui.blackRefractValue.textContent = parseFloat(ui.blackRefractSlider.value).toFixed(2);
       });
@@ -906,8 +912,17 @@
         const commandEncoder = device.createCommandEncoder();
         // update time for wave generators
         for (let i = 0; i < dtPerFrame; i++) {
-          uniformData[4] += dt; // * simSpeed; // for updating outside the loop
-          device.queue.writeBuffer(uniformBuffer, 4 * Float32Array.BYTES_PER_ELEMENT, new Float32Array([uniformData[4]]));
+          uniformData[Utime] += dt; // * simSpeed; // for updating outside the loop
+
+          // ease the wave off when disabled
+          if (!waveOn && uniformData[Uamp] > 0) {
+            uniformData[Uamp] -= decayRate / uniformData[Uwavelength] * ampVal;
+            if (uniformData[Uamp] < 0) {
+              uniformData[Uamp] = 0;
+              uniformData[UwaveOn] = 0;
+            }
+          }
+          device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
 
           const computePass = commandEncoder.beginComputePass();
           computePass.setPipeline(computePipeline);
@@ -939,7 +954,7 @@
       }
       requestAnimationFrame(frame);
 
-      // ---- Other event listeners ----
+      // Other event listeners
       ui.collapse.onclick = () => {
         ui.collapse.innerText = ui.collapse.innerText === ">" ? "<" : ">";
         if (ui.panel.classList.contains("hidden")) {
