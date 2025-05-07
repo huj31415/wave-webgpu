@@ -1,3 +1,5 @@
+let adapter, device;
+
 async function main() {
   const ui = Object.freeze({
     panel: document.getElementById("controls"),
@@ -58,9 +60,8 @@ async function main() {
   // Simulation Parameters
   let numCells = width * height;
 
-  let dtPerFrame = 10;
+  let dtPerFrame = parseInt(ui.simSpeedSlider.value);
   let dt = 0.1;//1 / Math.sqrt(2) - 1e-4; // < dx / c*sqrt2
-  let time = 0;
 
   const initU = 0; // initial state of simulation domain
   const initC = 1; // initial value of C
@@ -69,12 +70,16 @@ async function main() {
   const decayRate = 0.1; // decay rate when wave is disabled
   let ampVal = 1;
 
+  let exit = false;
+
   // WebGPU Setup
   const canvas = document.getElementById("canvas");
   canvas.width = width;
   canvas.height = height;
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
+  if (!adapter) {
+    adapter = await navigator.gpu?.requestAdapter();
+    device = await adapter?.requestDevice();
+  }
   if (!device) {
     alert("Browser does not support WebGPU");
     document.body.textContent = "WebGPU is not supported in this browser.";
@@ -87,6 +92,12 @@ async function main() {
     format: swapChainFormat,
   });
 
+  const displayType = Object.freeze({
+    wave: 0,
+    speed: 1,
+    end: 2
+  })
+
   // Preset setup
   const Preset = Object.freeze({
     doubleSlit: 0,
@@ -98,11 +109,11 @@ async function main() {
   let activePreset = Preset[ui.preset.value];
 
   ui.offsetLeftSlider.max = width - 1;
-  ui.offsetLeftSlider.value = ui.offsetLeftValue.value = 200;
+  // ui.offsetLeftSlider.value = ui.offsetLeftValue.value = 200;
   ui.dsSpacingSlider.max = ui.dsSpacingValue.textContent = height;
-  ui.dsSpacingSlider.value = ui.dsSpacingValue.textContent = 200;
+  // ui.dsSpacingSlider.value = ui.dsSpacingValue.textContent = 200;
   ui.elRadiusSlider.max = height * 2;
-  ui.elRadiusValue.value = 300;
+  // ui.elRadiusValue.value = 300;
   ui.rRadiusSlider.max = ui.rRadiusSlider.value = ui.rRadiusValue.textContent = height;
 
   // Simulation Buffers
@@ -154,7 +165,17 @@ async function main() {
   const UwaveOn = 9;
   const UbrightnessCrossSection = 10;
   const UbrightnessDecayFactor = 11;
-  const uniformData = new Float32Array([width, height, dt, 0, time, 1, 20, 1, 0, 1, width - 2, 0.95]);
+  const uniformData = new Float32Array([width, height, dt, 
+    displayType[ui.displayType.value],
+    0,
+    ui.boundaryAbsorb.checked ? 1 : 0,
+    parseInt(ui.wavelengthSlider.value),
+    parseFloat(ui.amplitudeSlider.value),
+    ui.planeWave.checked ? 0 : 1,
+    1,
+    width - 2,
+    0.95
+  ]);
   const uniformBuffer = device.createBuffer({
     size: uniformData.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -828,9 +849,10 @@ async function main() {
     // }
 
     //setTimeout(frame, 500);
-    requestAnimationFrame(frame);
+    console.log(uniformData[Utime]);
+    if (!exit) requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
+  if (!exit) requestAnimationFrame(frame);
 
   // Other event listeners
   ui.collapse.onclick = () => {
@@ -842,7 +864,10 @@ async function main() {
     }
   };
   // window.onresize = () => setTimeout(() => location.reload(), 100);
-  window.onresize = () => main();
+  window.onresize = () => {
+    exit = true;
+    main();
+  };
 }
 
 main();
