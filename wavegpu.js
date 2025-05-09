@@ -122,7 +122,7 @@ async function main() {
   const stateBuffer0 = device.createBuffer({
     size: stateBufferSize,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-    label: "state0"
+    label: "state0",
   });
   const stateBuffer1 = device.createBuffer({
     size: stateBufferSize,
@@ -254,6 +254,9 @@ async function main() {
       if (x >= width || y >= height) {return;}
       let index = y * width + x;
       let cdt = waveSpeed[index] * uniforms.dt;
+
+      if ((uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {return;}
+
       let frac = (cdt - 1) / (cdt + 1);
 
       let west = index - 1;
@@ -274,7 +277,6 @@ async function main() {
           - 20 * stateNow[index]) / 6.0f;
 
 
-      if ((uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {return;}
 
       stateNext[index] = 2 * stateNow[index] - statePrev[index]
         + cdt * cdt
@@ -849,10 +851,9 @@ async function main() {
     // }
 
     //setTimeout(frame, 500);
-    console.log(uniformData[Utime]);
     if (!exit) requestAnimationFrame(frame);
   }
-  if (!exit) requestAnimationFrame(frame);
+  if (!exit) frame();
 
   // Other event listeners
   ui.collapse.onclick = () => {

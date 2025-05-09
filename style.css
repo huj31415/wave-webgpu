@@ -84,3 +84,7 @@ h2 {
 .control-group>* {
   margin-top: 5px;
 }
+
+p {
+  margin-bottom: 5px;
+}
