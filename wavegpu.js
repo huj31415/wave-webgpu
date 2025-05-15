@@ -123,17 +123,17 @@ async function main() {
   const stateBufferSize = numCells * Float32Array.BYTES_PER_ELEMENT;
   const stateBuffer0 = device.createBuffer({
     size: stateBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     label: "state0",
   });
   const stateBuffer1 = device.createBuffer({
     size: stateBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     label: "state1"
   });
   const stateBuffer2 = device.createBuffer({
     size: stateBufferSize,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     label: "state2"
   });
   // wave speeds
@@ -147,7 +147,13 @@ async function main() {
     size: height * Float32Array.BYTES_PER_ELEMENT,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     label: "crossSectionBrightness"
-  })
+  });
+
+  const timeBuffer = device.createBuffer({
+    size: Float32Array.BYTES_PER_ELEMENT,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    label: "timeBuffer"
+  });
 
   // wave speed array for updating
   const cArray = new Float32Array(numCells);
@@ -159,7 +165,7 @@ async function main() {
   const Uheight = 1;
   const Udt = 2;
   const Udisplay = 3;
-  const Utime = 4;
+  // const Utime = 4;
   const UboundaryAbsorb = 5;
   const Uwavelength = 6;
   const Uamp = 7;
@@ -167,7 +173,7 @@ async function main() {
   const UwaveOn = 9;
   const UbrightnessCrossSection = 10;
   const UbrightnessDecayFactor = 11;
-  const uniformData = new Float32Array([width, height, dt, 
+  const uniformData = new Float32Array([width, height, dt,
     displayType[ui.displayType.value],
     0,
     ui.boundaryAbsorb.checked ? 1 : 0,
@@ -188,9 +194,10 @@ async function main() {
   // Simulation Initialization
 
   function writeWaveState(f32offset, array) {
-    device.queue.writeBuffer(stateBuffer0, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
-    device.queue.writeBuffer(stateBuffer1, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
-    device.queue.writeBuffer(stateBuffer2, f32offset * Float32Array.BYTES_PER_ELEMENT, array.buffer);
+    totalOffset = f32offset * Float32Array.BYTES_PER_ELEMENT;
+    device.queue.writeBuffer(stateBuffer0, totalOffset, array.buffer);
+    device.queue.writeBuffer(stateBuffer1, totalOffset, array.buffer);
+    device.queue.writeBuffer(stateBuffer2, totalOffset, array.buffer);
   }
 
   function resetState() {
@@ -199,7 +206,9 @@ async function main() {
 
     writeWaveState(0, initialState);
 
-    uniformData[Utime] = 0;
+    // reset time
+    // uniformData[Utime] = 0;
+    device.queue.writeBuffer(timeBuffer, 0, new Float32Array([0]));
   }
 
   function resetWaveSpeed() {
@@ -230,7 +239,7 @@ async function main() {
       height: f32,
       dt: f32,
       display: f32,
-      time: f32, // may need a separate uniform for time
+      slot0: f32, // separate uniform for time
       boundaryAbsorb: f32,
       wavelength: f32,
       amp: f32,
@@ -245,6 +254,7 @@ async function main() {
     @group(0) @binding(3) var<storage, read> waveSpeed: array<f32>;
     @group(0) @binding(4) var<storage, read_write> brightness: array<f32>;
     @group(0) @binding(5) var<uniform> uniforms: Uniforms;
+    @group(0) @binding(6) var<storage, read_write> time: f32;
 
     @compute @workgroup_size(16, 16)
     fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -253,11 +263,13 @@ async function main() {
       let y = i32(global_id.y);
       let width = i32(uniforms.width);
       let height = i32(uniforms.height);
-      if (x >= width || y >= height) {return;}
       let index = y * width + x;
       let cdt = waveSpeed[index] * uniforms.dt;
+      if (index == 0) {time += uniforms.dt;}
 
-      if ((uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {return;}
+      if ((x >= width || y >= height) || (uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {
+        return;
+      }
 
       let frac = (cdt - 1) / (cdt + 1);
 
@@ -280,9 +292,7 @@ async function main() {
 
 
 
-      stateNext[index] = 2 * stateNow[index] - statePrev[index]
-        + cdt * cdt
-        * laplacian;
+      stateNext[index] = 2 * stateNow[index] - statePrev[index] + cdt * cdt * laplacian;
 
       // absorbing boundaries - Mur's first order - right/left and c<0 barrier
       // x boundaries
@@ -310,7 +320,7 @@ async function main() {
 
       // Wave generators
       if (uniforms.waveOn == 1) {
-        let waveGen = uniforms.amp * sin(uniforms.time * pi2 / uniforms.wavelength);
+        let waveGen = uniforms.amp * sin(time * pi2 / uniforms.wavelength);
         if (uniforms.waveType == 0 && x == 1) {
           // plane wave
           stateNext[index] = waveGen;
@@ -348,6 +358,7 @@ async function main() {
       { binding: 3, resource: { buffer: cBuffer } },
       { binding: 4, resource: { buffer: brightnessBuffer } },
       { binding: 5, resource: { buffer: uniformBuffer } },
+      { binding: 6, resource: { buffer: timeBuffer } }
     ],
     label: "computeBindGroup"
   });
@@ -615,7 +626,7 @@ async function main() {
       waveOn = !waveOn;
 
       if (waveOn) {
-        uniformData[Utime] = 0;
+        device.queue.writeBuffer(timeBuffer, 0, new Float32Array([0]));
         uniformData[UwaveOn] = 1 - uniformData[UwaveOn];
         if (uniformData[Uamp] < ampVal) {
           uniformData[Uamp] = ampVal;
@@ -719,95 +730,96 @@ async function main() {
 
 
   // Barrier Setting (Mouse Click)
+  {
 
-
-  let isDrawing = false;
-  let newC = null;
-  canvas.addEventListener("mousedown", (event) => {
-    if (uniformData[Udisplay] < 2) {
-      isDrawing = true;
-      placeBarrier(event);
+    let isDrawing = false;
+    let newC = null;
+    canvas.addEventListener("mousedown", (event) => {
+      if (uniformData[Udisplay] < 2) {
+        isDrawing = true;
+        placeBarrier(event);
+      }
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (isDrawing) {
+        event.getCoalescedEvents().forEach((event) => placeBarrier(event));
+      }
+    });
+    canvas.addEventListener("mouseup", () => {
+      isDrawing = false;
+      newC = null;
+    });
+    function placeBarrier(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor(event.clientX - rect.left);
+      const y = height - Math.floor(event.clientY - rect.top);
+      const index = y * width + x;
+      if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
+      cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
+      const offset = index * Float32Array.BYTES_PER_ELEMENT;
+      device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
+      writeWaveState(index, new Float32Array([initU]));
     }
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (isDrawing) {
-      event.getCoalescedEvents().forEach((event) => placeBarrier(event));
-    }
-  });
-  canvas.addEventListener("mouseup", () => {
-    isDrawing = false;
-    newC = null;
-  });
-  function placeBarrier(event) {
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor(event.clientX - rect.left);
-    const y = height - Math.floor(event.clientY - rect.top);
-    const index = y * width + x;
-    if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
-    cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
-    const offset = index * Float32Array.BYTES_PER_ELEMENT;
-    device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
-    writeWaveState(index, new Float32Array([initU]));
-  }
 
-  // Image Upload & Processing
-  ui.blackRefractSlider.addEventListener("input", () => {
-    ui.blackRefractValue.textContent = parseFloat(ui.blackRefractSlider.value).toFixed(2);
-  });
-  ui.whiteRefractSlider.addEventListener("input", () => {
-    ui.whiteRefractValue.textContent = parseFloat(ui.whiteRefractSlider.value).toFixed(2);
-  });
-  ui.imageApply.addEventListener("click", () => {
-    if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
-    resetWaveSpeed();
-    const file = ui.imageUpload.files[0];
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        // Get the UI scale factor.
-        const uiScale = parseFloat(ui.imageScale.value);
-        // Compute the maximum scale factor to fit the canvas.
-        const fitScale = Math.min(width / img.width, height / img.height);
-        // Final target size: original image scaled by fitScale and then by uiScale.
-        const targetWidth = Math.round(img.width * fitScale * uiScale);
-        const targetHeight = Math.round(img.height * fitScale * uiScale);
-        // Create offscreen canvas to draw the scaled image.
-        const offCanvas = document.createElement("canvas");
-        offCanvas.width = targetWidth;
-        offCanvas.height = targetHeight;
-        const offCtx = offCanvas.getContext("2d");
-        offCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        const imageData = offCtx.getImageData(0, 0, targetWidth, targetHeight);
-        // Compute offsets to center the barrier image in the simulation grid.
-        const offsetX = Math.floor((width - targetWidth) / 2);
-        const offsetY = Math.floor((height - targetHeight) / 2);
-        for (let j = 1; j < targetHeight; j++) { // unstable with j = 0
-          for (let i = 0; i < targetWidth; i++) {
-            const idx = ((targetHeight - j) * targetWidth + i) * 4;
-            // Compute normalized brightness (average of R, G, B).
-            const b = (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / (3 * 255);
-            const brightness = ui.barrierInvert.checked ? 1 - b : b;
-            const simX = offsetX + i;
-            const simY = offsetY + j;
-            if (simX >= 0 && simX < width && simY >= 0 && simY < height) {
-              updateCell(
-                simX,
-                simY,
-                (ui.blockBottom.checked && j === 1 || ui.blockTop.checked && j === targetHeight - 1)
-                  ? -1
-                  : (1 - brightness) * initC / parseFloat(ui.blackRefractSlider.value)
-                  + brightness * initC / parseFloat(ui.whiteRefractSlider.value)
-              );
+    // Image Upload & Processing
+    ui.blackRefractSlider.addEventListener("input", () => {
+      ui.blackRefractValue.textContent = parseFloat(ui.blackRefractSlider.value).toFixed(2);
+    });
+    ui.whiteRefractSlider.addEventListener("input", () => {
+      ui.whiteRefractValue.textContent = parseFloat(ui.whiteRefractSlider.value).toFixed(2);
+    });
+    ui.imageApply.addEventListener("click", () => {
+      if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
+      resetWaveSpeed();
+      const file = ui.imageUpload.files[0];
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          // Get the UI scale factor.
+          const uiScale = parseFloat(ui.imageScale.value);
+          // Compute the maximum scale factor to fit the canvas.
+          const fitScale = Math.min(width / img.width, height / img.height);
+          // Final target size: original image scaled by fitScale and then by uiScale.
+          const targetWidth = Math.round(img.width * fitScale * uiScale);
+          const targetHeight = Math.round(img.height * fitScale * uiScale);
+          // Create offscreen canvas to draw the scaled image.
+          const offCanvas = document.createElement("canvas");
+          offCanvas.width = targetWidth;
+          offCanvas.height = targetHeight;
+          const offCtx = offCanvas.getContext("2d");
+          offCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
+          const imageData = offCtx.getImageData(0, 0, targetWidth, targetHeight);
+          // Compute offsets to center the barrier image in the simulation grid.
+          const offsetX = Math.floor((width - targetWidth) / 2);
+          const offsetY = Math.floor((height - targetHeight) / 2);
+          for (let j = 1; j < targetHeight; j++) { // unstable with j = 0
+            for (let i = 0; i < targetWidth; i++) {
+              const idx = ((targetHeight - j) * targetWidth + i) * 4;
+              // Compute normalized brightness (average of R, G, B).
+              const b = (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / (3 * 255);
+              const brightness = ui.barrierInvert.checked ? 1 - b : b;
+              const simX = offsetX + i;
+              const simY = offsetY + j;
+              if (simX >= 0 && simX < width && simY >= 0 && simY < height) {
+                updateCell(
+                  simX,
+                  simY,
+                  (ui.blockBottom.checked && j === 1 || ui.blockTop.checked && j === targetHeight - 1)
+                    ? -1
+                    : (1 - brightness) * initC / parseFloat(ui.blackRefractSlider.value)
+                    + brightness * initC / parseFloat(ui.whiteRefractSlider.value)
+                );
+              }
             }
           }
-        }
-        device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
+          device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
+        };
+        img.src = e.target.result;
       };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
+      reader.readAsDataURL(file);
+    });
+  }
 
 
   // Simulation Loop
@@ -815,21 +827,20 @@ async function main() {
   function frame() {
     // for (let i = 0; i < dtPerFrame; i++) {
 
-    const commandEncoder = device.createCommandEncoder();
-    // update time for wave generators
-    for (let i = 0; i < dtPerFrame; i++) {
-      uniformData[Utime] += dt; // * simSpeed; // for updating outside the loop
-
       // ease the wave off when disabled
       if (!waveOn && uniformData[Uamp] > 0) {
-        uniformData[Uamp] -= decayRate / uniformData[Uwavelength] * ampVal;
+        uniformData[Uamp] -= decayRate / uniformData[Uwavelength] * ampVal * dtPerFrame;
         if (uniformData[Uamp] < 0) {
           uniformData[Uamp] = 0;
           uniformData[UwaveOn] = 0;
         }
       }
+      
       device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
 
+      const commandEncoder = device.createCommandEncoder();
+      // update time for wave generators
+      for (let i = 0; i < dtPerFrame; i++) {
       const computePass = commandEncoder.beginComputePass();
       computePass.setPipeline(computePipeline);
       computePass.setBindGroup(0, computeBindGroup(bufferPrev, bufferNow, bufferNext));
