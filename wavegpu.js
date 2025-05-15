@@ -4,6 +4,8 @@ async function main() {
   const ui = Object.freeze({
     panel: document.getElementById("controls"),
     collapse: document.getElementById("toggleSettings"),
+    dt: document.getElementById("dt"),
+    dtValue: document.getElementById("dtValue"),
     displayType: document.getElementById("visualization"),
     reInit: document.getElementById("reinit"),
     simSpeedSlider: document.getElementById("simSpeed"),
@@ -568,9 +570,13 @@ async function main() {
       const mode = ui.displayType.value;
       const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
       uniformData[Udisplay] = modeVal;
-      device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
+      // device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
     });
 
+    // dt
+    ui.dt.addEventListener("input", () => {
+      ui.dtValue.textContent = dt = uniformData[Udt] = parseFloat(ui.dt.value);
+    });
 
     // Simulation speed
     ui.simSpeedSlider.addEventListener("input", () => {
@@ -844,7 +850,7 @@ async function main() {
     });
     renderPass.setPipeline(renderPipeline);
     renderPass.setBindGroup(0, renderBindGroup(bufferNow));
-    renderPass.draw(6, 1, 0, 0);
+    renderPass.draw(3, 1, 0, 0);
     renderPass.end();
 
     device.queue.submit([commandEncoder.finish()]);

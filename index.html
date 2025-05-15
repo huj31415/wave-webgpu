@@ -26,6 +26,12 @@
         <label for="boundaryAbsorb">Nonreflective boundaries</label>
       </div>
       <div>
+        <input id="dt" type="range" min="0.01" max="0.7" step="0.01" value="0.1">
+        <label for="dt">dt (&lt;1/c*sqrt2):
+          <span id="dtValue">0.1</span>
+        </label>
+      </div>
+      <div>
         <input id="simSpeed" type="range" min="0" max="100" step="2" value="10">
         <label for="simSpeed">dt per frame:
           <span id="simSpeedValue">10</span>
