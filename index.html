@@ -16,14 +16,14 @@
       <div>
         <select id="visualization">
           <option value="wave">Wave</option>
-          <option value="speed">Speed</option>
-          <option value="end">End screen intensity</option>
+          <!-- <option value="speed">Speed</option> -->
+          <!-- <option value="end">End screen intensity</option> -->
         </select>
         <label for="visualization">Visualization mode</label>
       </div>
       <div>
         <input id="boundaryAbsorb" type="checkbox" checked>
-        <label for="boundaryAbsorb">Nonreflective boundaries</label>
+        <label for="boundaryAbsorb">Absorbing boundary condition</label>
       </div>
       <div>
         <input id="dt" type="range" min="0.01" max="0.7" step="0.01" value="0.1">
@@ -67,7 +67,7 @@
       <div>
         <select id="preset">
           <option value="doubleSlit">Double slit</option>
-          <option value="ellipticalLens">Elliptical lens</option>
+          <option value="lens">Lens</option>
           <option value="circularReflector">Circular reflector</option>
           <option value="parabolicReflector">Parabolic reflector</option>
         </select>
@@ -84,18 +84,47 @@
             <span id="dsSpacingValue">200</span>
           </label>
         </div>
-        <div id="elSettings" class="hidden">
-          <input id="elRadiusSlider" type="range" min="0" max="1000" step="10" value="300">
-          <label for="elRadiusSlider">Lens radius:
-            <span id="elRadiusValue">300</span>
+        <div id="lensSettings" class="hidden">
+          <form id="lensOptions">
+            <span class="halfWidth">
+              <input id="lensElliptical" type="radio" name="lensShape" value="elliptical" checked>
+              <label for="lensElliptical">Elliptical</label>
+              <br>
+              <input id="lensParabolic" type="radio" name="lensShape" value="parabolic">
+              <label for="lensParabolic">Parabolic</label>
+            </span>
+            <span class="halfWidth">
+              <input id="lensConvex" type="radio" name="lensCurve" value="convex" checked>
+              <label for="lensConvex">Convex</label>
+              <br>
+              <input id="lensConcave" type="radio" name="lensCurve" value="concave">
+              <label for="lensConcave">Concave</label>
+            </span>
+            <span class="halfWidth">
+              <input id="lensNormal" type="radio" name="lensType" value="normal" checked>
+              <label for="lensNormal">Normal</label>
+              <br>
+              <input id="lensFresnel" type="radio" name="lensType" value="fresnel">
+              <label for="lensFresnel">Fresnel</label>
+            </span>
+          </form>
+          <input id="lensRadiusSlider" type="range" min="0" max="1000" step="10" value="300">
+          <label for="lensRadiusSlider">Lens radius:
+            <span id="lensRadiusValue">300</span>
           </label>
-          <input id="elARSlider" type="range" min="1" max="10" step=".1" value="4">
-          <label for="elARSlider">Aspect ratio:
-            <span id="elARValue">4</span>
+          <input id="lensARSlider" type="range" min="1" max="10" step=".1" value="4">
+          <label for="lensARSlider">Aspect ratio:
+            <span id="lensARValue">4</span>
           </label>
-          <input id="elIRSlider" type="range" min="0.25" max="4" step="0.05" value="1.2">
-          <label for="elIRSlider">Refraction index:
-            <span id="elIRValue">1.2</span>
+          <input id="lensDRSlider" type="range" min="2" max="10" step=".1" value="2">
+          <label for="lensDRSlider">Fresnel depth:
+            <span id="lensDRValue">2</span>
+          </label>
+          <input id="lensDir" type="range" min="-1" max="1" step="1" value="0">
+          <label for="lensDir">Half-lens</label>
+          <input id="lensIRSlider" type="range" min="0.25" max="4" step="0.05" value="1.2">
+          <label for="lensIRSlider">Refraction idx:
+            <span id="lensIRValue">1.20</span>
           </label>
         </div>
         <div id="rSettings" class="hidden">
@@ -111,9 +140,9 @@
         <label for="offsetLeftSlider">Offset left:
           <span id="offsetLeftValue">200</span>
         </label>
-        <!-- <button id="clrLoadPreset">Clear & load</button> -->
       </div>
-      <button id="loadPreset" class="fullwidth">Load preset</button>
+      <button id="loadPreset">Load preset</button>
+      <button id="clrLoadPreset">Clear & load</button>
     </div>
     <hr>
     <div class="control-group">

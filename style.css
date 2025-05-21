@@ -42,12 +42,19 @@ button,
 select {
   appearance: auto;
   display: inline-block;
+  width: 140px;
   margin: 3px;
   padding: 2px;
-  width: 140px;
 }
 
-button.fullwidth {
+.halfWidth {
+  display: inline-block;
+  width: 140px;
+  margin: 2px;
+  /* border: 1px solid #d8d7d5; */
+}
+
+.fullwidth {
   width: 290px;
 }
 
@@ -61,7 +68,7 @@ button.fullwidth {
   height: 100%;
   overflow: scroll;
   background: rgba(255, 255, 255, .7);
-  background: rgba(50, 50, 50, .5);
+  background: rgba(50, 50, 50, .7);
 }
 
 button#toggleSettings {
@@ -71,6 +78,14 @@ button#toggleSettings {
   top: 5px;
   right: 20px;
   z-index: 10;
+  transition-property: opacity;
+  transition-duration: 500ms;
+}
+.inactive {
+  opacity: 20%;
+}
+.inactive:hover {
+  opacity: 100%;
 }
 
 .hidden {
