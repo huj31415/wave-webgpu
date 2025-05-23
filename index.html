@@ -16,7 +16,7 @@
       <div>
         <select id="visualization">
           <option value="wave">Wave</option>
-          <!-- <option value="speed">Speed</option> -->
+          <option value="speed">Speed</option>
           <!-- <option value="end">End screen intensity</option> -->
         </select>
         <label for="visualization">Visualization mode</label>
@@ -49,7 +49,7 @@
         <label for="pointSource">Point source</label>
       </div>
       <div>
-        <input id="wavelength" type="range" min="4" max="100" step="2" value="20">
+        <input id="wavelength" type="range" min="6" max="100" step="2" value="20">
         <label for="wavelength">Wavelength:
           <span id="wavelengthValue">20</span>
         </label>
@@ -85,6 +85,7 @@
           </label>
         </div>
         <div id="lensSettings" class="hidden">
+          <p>Better at shorter wavelengths (&lt;10)</p>
           <form id="lensOptions">
             <span class="halfWidth">
               <input id="lensElliptical" type="radio" name="lensShape" value="elliptical" checked>
@@ -137,12 +138,11 @@
           <label for="rDir">Reverse direction</label>
         </div>
         <input id="offsetLeftSlider" type="range" min="0" max="1000" step="1" value="200">
-        <label for="offsetLeftSlider">Offset left:
+        <label for="offsetLeftSlider">Left offset:
           <span id="offsetLeftValue">200</span>
         </label>
       </div>
-      <button id="loadPreset">Load preset</button>
-      <button id="clrLoadPreset">Clear & load</button>
+      <button id="loadPreset" class="fullwidth">Load preset</button>
     </div>
     <hr>
     <div class="control-group">

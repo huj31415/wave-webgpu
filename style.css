@@ -1,11 +1,10 @@
-
 html {
   color-scheme: dark !important;
 }
 
 body {
   font-family: "Segoe UI", sans-serif;
-  /* font-size: .95em; */
+  font-size: .95em;
   overflow: hidden;
   background: black;
   color: #d8d7d5;
@@ -81,9 +80,11 @@ button#toggleSettings {
   transition-property: opacity;
   transition-duration: 500ms;
 }
+
 .inactive {
   opacity: 20%;
 }
+
 .inactive:hover {
   opacity: 100%;
 }
@@ -101,5 +102,5 @@ h2 {
 }
 
 p {
-  margin-bottom: 5px;
+  margin: 5px;
 }

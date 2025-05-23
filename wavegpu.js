@@ -268,7 +268,7 @@ async function main() {
       let cdt = waveSpeed[index] * uniforms.dt;
       if (index == 0) {time += uniforms.dt;}
 
-      if ((x >= width || y >= height) || (uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt < 0) {
+      if ((x >= width || y >= height) || (uniforms.boundaryAbsorb == 0 && (y >= height - 1 || y == 0)) || cdt <= 0) {
         return;
       }
 
@@ -468,8 +468,9 @@ async function main() {
    * @param x x coordinate
    * @param y y coordinate
    * @param value new value of c
+   * @param overwriteAll whether to refresh c across the entire domain
    */
-  function updateCell(x, y, value) {
+  function updateCell(x, y, value, overwriteAll = false) {
     if (x >= 0 && x < width && y >= 0 && y < height) {
       const index = y * width + x;
       cArray[index] = value;
@@ -495,100 +496,42 @@ async function main() {
     }
   }
 
-  /**
-   * Elliptical lens generator
-   * @param r height of the lens
-   * @param aspectRatio ratio of height to width
-   * @param dir direction of curve : -1 left, 0 both, 1 right
-   * @param convex convex (true) or concave (false), not yet implemented
-   * @param refractiveIndex ratio of external wave speed to internal wave speed
-   * @param offsetLeft distance from left boundary to center of lens
-   */
-  function ellipticalLens(r = height / 4, aspectRatio = 4, dir = 0, convex = false, refractiveIndex = 1.2, offsetLeft = 300) {
-    const rsq = Math.ceil(r) ** 2;
-    const halfLensWidth = Math.ceil(r / aspectRatio);
-    const xStart = dir <= 0 ? -halfLensWidth : 0;
-    const xEnd = dir >= 0 ? halfLensWidth : 0;
-    const newC = initC / refractiveIndex;
-    for (let i = -r; i < r; i++) {
-      for (let j = xStart; j < xEnd; j++) {
-        const test = (i * i + (aspectRatio * j) ** 2) < rsq;
-        if (test) // ((convex && test) || (!convex && !test))
-          updateCell(j + offsetLeft, i + halfHeight, newC);
-      }
-    }
-  }
 
   /**
-   * Parabolic lens generator
+   * Lens generator
+   * @param type Type configuration : "elliptical/parabolic" + "normal/fresnel"
    * @param r height of the lens
    * @param aspectRatio ratio of height to width
    * @param dir direction of curve : -1 left, 0 both, 1 right
    * @param convex convex (true) or concave (false)
+   * @param depthRatio ratio of fresnel ridge height to half thickness, for fresnel only
    * @param refractiveIndex ratio of external wave speed to internal wave speed
-   * @param offsetLeft distance from left boundary to center of lens
+   * @param offsetLeft distance from left simulation boundary to center of lens
    */
-  function parabolicLens(r = height / 4, aspectRatio = 4, dir = 0, convex = false, refractiveIndex = 1.2, offsetLeft = 300) {
+  function lensGenerator(type = "ellipticalnormal", r = height / 4, aspectRatio = 4, dir = 0, convex = true, depthRatio = 5, refractiveIndex = 1.2, offsetLeft = 300) {
     r = Math.ceil(r);
     dir *= convex ? 1 : -1;
-    const newC = initC / refractiveIndex;
+    const yLimit = type.includes("fresnel") ? halfHeight : r;
     const lensWidth = Math.ceil(r / aspectRatio);
+    const newC = initC / refractiveIndex;
     const a = aspectRatio * r;
-    for (let i = -r; i < r; i++) {
-      for (let j = 0; j <= lensWidth + (convex ? 0 : 10); j++) {
-        const test = (i * i) / a + j <= lensWidth;
-        const offset = convex ? 0 : lensWidth + 10;
-        if ((convex && test) || (!convex && !test)) {
-          const newNewC = (!convex && (i == -r || i == r - 1)) ? -1 : newC;
-          if (dir >= 0) updateCell(j + offsetLeft - offset, i + halfHeight, newNewC);
-          if (dir <= 0) updateCell(-j + offsetLeft + offset, i + halfHeight, newNewC);
-        }
-      }
-    }
-  }
+    const depthRatioInv = 1 / depthRatio;
+    const fresnelOffset = convex ? (10 - lensWidth * (1 - depthRatioInv)) : 0;
 
-  /**
-   * Elliptical fresnel lens generator
-   * @param r height of the lens
-   * @param aspectRatio ratio of height to width
-   * @param dir direction of curve : -1 left, 0 both, 1 right
-   * @param depthRatio ratio of Fresnel ridge thickness to total thickness
-   * @param refractiveIndex ratio of external wave speed to internal wave speed
-   * @param offsetLeft distance from left boundary to center of lens
-   */
-  function ellipticalFresnel(r = height / 4, aspectRatio = 4, dir = -1, depthRatio = 5, refractiveIndex = 1.2, offsetLeft = 200) {
-    r = Math.ceil(r);
-    const halfLensWidth = Math.ceil(r / aspectRatio / 2);
-    const rsq = r ** 2;
-    const newC = initC / refractiveIndex;
-    const xStart = dir > 0 ? -(r / 4) : (dir < 0 ? 0 : -halfWidth);
-    const xEnd = dir < 0 ? (r / 4) : (dir > 0 ? 0 : halfWidth);
-    for (let i = -halfHeight; i < halfHeight; i++) {
-      for (let j = xStart; j < xEnd; j++) {
-        if (((i * i) % (rsq / 4) + (aspectRatio * j + dir * r) ** 2) < rsq)
-          updateCell(j + offsetLeft, i + halfHeight, newC);
-      }
-    }
-  }
-  /**
-   * Parabolic fresnel lens generator
-   * @param r height of the lens
-   * @param aspectRatio ratio of height to width
-   * @param dir direction of curve : -1 left, 0 both, 1 right
-   * @param depthRatio ratio of Fresnel ridge thickness to total thickness
-   * @param refractiveIndex ratio of external wave speed to internal wave speed
-   * @param offsetLeft distance from left boundary to center of lens
-   */
-  function parabolicFresnel(r = height / 3, aspectRatio = 2, dir = -1, depthRatio = 5, refractiveIndex = 1.2, offsetLeft = 200) {
-    r = Math.ceil(r);
-    const newC = initC / refractiveIndex;
-    const lensWidth = Math.ceil(r / aspectRatio);
-    const a = aspectRatio * r;
-    for (let i = -halfHeight; i < halfHeight; i++) {
-      for (let j = 0; j <= lensWidth + 20; j++) {
-        if (((i * i) / a) % (lensWidth / depthRatio) + (j - 20 + lensWidth * (1 - 1 / depthRatio)) <= lensWidth) {
-          if (dir >= 0) updateCell(j + offsetLeft, i + halfHeight, newC);
-          if (dir <= 0) updateCell(-j + offsetLeft, i + halfHeight, newC);
+    // equations for lens shapes
+    const lensShapes = Object.freeze({
+      ellipticalnormal:  (i, j) => (i * i + (aspectRatio * j) ** 2) < r * r,
+      ellipticalfresnel: (i, j) => (i * i) % (r * r * (1 - (1 - depthRatioInv) ** 2)) + (aspectRatio * (j - fresnelOffset)) ** 2 < r * r,
+      parabolicnormal:   (i, j) => (i * i / a) + j - (convex ? 20 : 0) < lensWidth,
+      parabolicfresnel:  (i, j) => (i * i / a) % (lensWidth * depthRatioInv) + (j - fresnelOffset) < lensWidth,
+    });
+
+    for (let i = -yLimit; i < yLimit; i++) {
+      for (let j = 0; j < lensWidth + 20; j++) {
+        const offset = (convex ? 0 : lensWidth + 10);
+        if (convex === lensShapes[type](i, j)) {
+          if (dir >= 0) updateCell(j + offsetLeft - offset, i + halfHeight, newC);
+          if (dir <= 0) updateCell(-j + offsetLeft + offset, i + halfHeight, newC);
         }
       }
     }
@@ -707,26 +650,15 @@ async function main() {
           for (entry of data) {
             options[entry[0]] = entry[1];
           }
+          const config = options["lensShape"] + options["lensType"];
           const r = parseInt(ui.lensRadiusSlider.value);
           const ar = parseFloat(ui.lensARSlider.value);
           const dir = parseInt(ui.lensDir.value);
           const curve = options.lensCurve == "convex";
           const ir = parseFloat(ui.lensIRSlider.value);
           const dr = parseFloat(ui.lensDRSlider.value);
-
-          if (options.lensType == "normal") {
-            if (options.lensShape == "elliptical") {
-              ellipticalLens(r, ar, dir, curve, ir, ol);
-            } else {
-              parabolicLens(r, ar, dir, curve, ir, ol);
-            }
-          } else {
-            if (options.lensShape == "elliptical") {
-              ellipticalFresnel(r, ar, dir, dr, ir, ol);
-            } else {
-              parabolicFresnel(r, ar, dir, dr, ir, ol);
-            }
-          }
+          
+          lensGenerator(config, r, ar, dir, curve, dr, ir, ol);
           break;
         case Preset.circularReflector:
           circularReflector(
@@ -816,10 +748,13 @@ async function main() {
       const y = height - Math.floor(event.clientY - rect.top);
       const index = y * width + x;
       if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
-      cArray[index] = newC; //barrierArray[index] === 0 ? 1 : 0;
-      const offset = index * Float32Array.BYTES_PER_ELEMENT;
-      device.queue.writeBuffer(cBuffer, offset, new Float32Array([cArray[index]]));
-      writeWaveState(index, new Float32Array([initU]));
+      cArray[index] = newC;
+      const indexOffsets = [0, 1, -1, width, -width, width + 1, width - 1, -width + 1, -width - 1];
+      indexOffsets.forEach((offset) => {
+        const totalOffset = index + offset;
+        device.queue.writeBuffer(cBuffer, totalOffset * Float32Array.BYTES_PER_ELEMENT, new Float32Array([newC]))
+        writeWaveState(totalOffset, new Float32Array([initU]));
+      });
     }
 
     // Image Upload & Processing
