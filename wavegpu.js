@@ -29,6 +29,10 @@ const ui = Object.freeze({
   waveToggle: document.getElementById("waveToggle"),
   blockTop: document.getElementById("blockTop"),
   blockBottom: document.getElementById("blockBottom"),
+  jsTime: document.getElementById("jsTime"),
+  // gpuTime: document.getElementById("gpuTime"),
+  frameTime: document.getElementById("frameTime"),
+  fps: document.getElementById("fps"),
   // preset settings
   preset: document.getElementById("preset"),
   presetSettings: document.getElementById("presetSettings"),
@@ -40,6 +44,7 @@ const ui = Object.freeze({
   dsSpacingValue: document.getElementById("dsSpacingValue"),
   dsWidthSlider: document.getElementById("dsWidthSlider"),
   dsWidthValue: document.getElementById("dsWidthValue"),
+  dsNumSlits: document.getElementById("dsNumSlits"),
   lensSettings: document.getElementById("lensSettings"),
   lensRadiusSlider: document.getElementById("lensRadiusSlider"),
   lensRadiusValue: document.getElementById("lensRadiusValue"),
@@ -68,7 +73,7 @@ async function main() {
   let numCells = width * height;
 
   let dtPerFrame = parseInt(ui.simSpeedSlider.value);
-  let dt = 0.1;//1 / Math.sqrt(2) - 1e-4; // < dx / c*sqrt2
+  let dt = parseFloat(ui.dt.value);//1 / Math.sqrt(2) - 1e-4; // < dx / c*sqrt2
 
   const initU = 0; // initial state of simulation domain
   const initC = 1; // initial value of C
@@ -85,7 +90,12 @@ async function main() {
   canvas.height = height;
   if (!adapter) {
     adapter = await navigator.gpu?.requestAdapter();
-    device = await adapter?.requestDevice();
+    const canTimestamp = adapter.features.has('timestamp-query');
+    device = await adapter?.requestDevice({
+      requiredFeatures: [
+        ...(canTimestamp ? ['timestamp-query'] : []),
+      ],
+    });
   }
   if (!device) {
     alert("Browser does not support WebGPU");
@@ -107,7 +117,7 @@ async function main() {
 
   // Preset setup
   const Preset = Object.freeze({
-    doubleSlit: 0,
+    slits: 0,
     lens: 1,
     circularReflector: 2,
     parabolicReflector: 3,
@@ -166,7 +176,7 @@ async function main() {
   const cArrPrev = new Float32Array(numCells).fill(initC);
 
   // Uniform Buffer
-  // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), waveOn, brightnessCrossSection, brightnessDecayFactor]
+  // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), waveOn, brightnessCrossSection, brightnessFilterStrength]
   const Uwidth = 0;
   const Uheight = 1;
   const Udt = 2;
@@ -178,7 +188,7 @@ async function main() {
   const Utype = 8;
   const UwaveOn = 9;
   const UbrightnessCrossSection = 10;
-  const UbrightnessDecayFactor = 11;
+  const UbrightnessFilterStrength = 11;
   const uniformData = new Float32Array([width, height, dt,
     displayType[ui.displayType.value],
     0,
@@ -188,7 +198,7 @@ async function main() {
     ui.planeWave.checked ? 0 : 1,
     1,
     width - 2,
-    0.95
+    200
   ]);
   const uniformBuffer = device.createBuffer({
     size: uniformData.byteLength,
@@ -200,10 +210,10 @@ async function main() {
   // Simulation Initialization
 
   function writeWaveState(f32offset, array) {
-    totalOffset = f32offset * Float32Array.BYTES_PER_ELEMENT;
-    device.queue.writeBuffer(stateBuffer0, totalOffset, array.buffer);
-    device.queue.writeBuffer(stateBuffer1, totalOffset, array.buffer);
-    device.queue.writeBuffer(stateBuffer2, totalOffset, array.buffer);
+    const byteOffset = f32offset * Float32Array.BYTES_PER_ELEMENT;
+    device.queue.writeBuffer(stateBuffer0, byteOffset, array.buffer);
+    device.queue.writeBuffer(stateBuffer1, byteOffset, array.buffer);
+    device.queue.writeBuffer(stateBuffer2, byteOffset, array.buffer);
   }
 
   function resetState() {
@@ -212,11 +222,10 @@ async function main() {
     writeWaveState(0, initialState);
 
     // reset time
-    // uniformData[Utime] = 0;
     device.queue.writeBuffer(timeBuffer, 0, new Float32Array([0]));
   }
 
-  function resetWaveSpeed() {
+  function resetCBuffer() {
     cArray.fill(initC);
     device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
   }
@@ -226,7 +235,7 @@ async function main() {
 
     cArray.fill(initC);
 
-    doubleSlit();
+    slitInterference();
 
     device.queue.writeBuffer(cBuffer, 0, cArray.buffer);
 
@@ -247,7 +256,7 @@ async function main() {
       waveType: f32,
       waveOn: f32,
       crossSectionX: f32,
-      brightnessDecayFactor: f32
+      brightnessFilterStrength: f32
     };
     @group(0) @binding(0) var<storage, read> statePrev: array<f32>;
     @group(0) @binding(1) var<storage, read> stateNow: array<f32>;
@@ -283,9 +292,11 @@ async function main() {
       let se = south + 1;
       let sw = south - 1;
 
+      // 5 point stencil
       // let laplacian = (stateNow[east] + stateNow[west] + stateNow[south] + stateNow[north]
       // - 4 * stateNow[index]);
 
+      // 9 point stencil
       let laplacian = (4 * (stateNow[east] + stateNow[west] + stateNow[south] + stateNow[north])
           + (stateNow[ne] + stateNow[nw] + stateNow[se] + stateNow[sw])
           - 20 * stateNow[index]) / 6.0f;
@@ -296,10 +307,11 @@ async function main() {
       // x boundaries
       if (x == width - 1 || waveSpeed[east] < 0) {
         stateNext[index] = stateNow[west] + frac * (stateNext[west] - stateNow[index]);
-        return;
-      } else if (x == 0 || waveSpeed[west] < 0) {
+        // return;
+      }
+      if (x == 0 || waveSpeed[west] < 0) {
         stateNext[index] = stateNow[east] + frac * (stateNext[east] - stateNow[index]);
-        return;
+        // return;
       }
       
       // y boundaries - only when enabled
@@ -311,7 +323,8 @@ async function main() {
           //   + (2.0 * (stateNow[index] + stateNow[north])
           //     + cdt * cdt / 2 * (stateNow[east] + stateNow[west] + stateNow[nw] + stateNow[ne] - 2 * (stateNow[index] + stateNow[north]))
           //   ) / (cdt + 1);
-        } else if (y == 0 || waveSpeed[north] < 0) {
+        }
+        if (y == 0 || waveSpeed[north] < 0) {
           stateNext[index] = stateNow[south] + frac * (stateNext[south] - stateNow[index]);
         }
         return;
@@ -330,16 +343,12 @@ async function main() {
       }
 
       if (uniforms.display == 2 && x == i32(uniforms.crossSectionX)) {
-        brightness[y] = brightness[y] * uniforms.brightnessDecayFactor + stateNow[index] * stateNow[index] / 10;
+        // brightness[y] = brightness[y] * uniforms.brightnessFilterStrength + stateNow[index] * stateNow[index] / 10;
+        brightness[y] += (stateNow[index] * stateNow[index] - brightness[y]) / uniforms.brightnessFilterStrength; // low pass filter
         // brightness[y] += stateNow[index] * stateNow[index] / 10;
       } else if (uniforms.display < 2) {
         brightness[y] = 0;
       }
-
-      // old boundaries - reflective
-      //if ((x == width - 1 || x == 0) || (y == width - 1 || y == 0)) {return;}
-
-      //stateNext[index] = 0.999999 * (stateNext[index] - 1) + 1;
     }
   `;
   const computeModule = device.createShaderModule({ code: computeShaderCode, label: "computeModule" });
@@ -376,7 +385,7 @@ async function main() {
       waveType: f32,
       waveOn: f32,
       crossSectionX: f32,
-      brightnessDecayFactor: f32
+      brightnessFilterStrength: f32
     };
     @group(0) @binding(0) var<storage, read> state: array<f32>;
     @group(0) @binding(1) var<uniform> uniforms: Uniforms;
@@ -468,9 +477,8 @@ async function main() {
    * @param x x coordinate
    * @param y y coordinate
    * @param value new value of c
-   * @param overwriteAll whether to refresh c across the entire domain
    */
-  function updateCell(x, y, value, overwriteAll = false) {
+  function updateCell(x, y, value) {
     if (x >= 0 && x < width && y >= 0 && y < height) {
       const index = y * width + x;
       cArray[index] = value;
@@ -481,18 +489,23 @@ async function main() {
   }
 
   /**
-   * Double slit interference
+   * Slit interference
    * @param slitWidth width of the slit
    * @param spacing spacing between slit centers
    * @param offsetLeft distance from left boundary to center of lens
    */
-  function doubleSlit(slitWidth = 10, spacing = 200, offsetLeft = 200) {
+  function slitInterference(slitWidth = 20, spacing = 200, nSlits = 2, offsetLeft = 200) {
     const halfSpacing = Math.round(spacing / 2);
     const radius = Math.round(slitWidth / 2);
-    for (let i = -halfHeight; i < halfHeight; i++) {
-      if ((i < -halfSpacing - radius || i > -halfSpacing + radius)
-        && (i < halfSpacing - radius || i > halfSpacing + radius))
-        updateCell(offsetLeft, i + halfHeight, -1);
+    
+    for (let i = 0; i < halfHeight; i++) {
+      // symmetric around half height
+      if ((Math.abs((i + ((nSlits % 2 == 0) ? 0 : halfSpacing)) % spacing - halfSpacing) > radius) // fill outside of holes
+        || (i > radius + (halfSpacing - 1) * nSlits) // fill the rest of the barrier
+      ) {
+        updateCell(offsetLeft, halfHeight + i, -1);
+        updateCell(offsetLeft, halfHeight - i, -1);
+      }
     }
   }
 
@@ -502,7 +515,7 @@ async function main() {
    * @param type Type configuration : "elliptical/parabolic" + "normal/fresnel"
    * @param r height of the lens
    * @param aspectRatio ratio of height to width
-   * @param dir direction of curve : -1 left, 0 both, 1 right
+   * @param dir direction of curve : -1 left, 0 symmetrical, 1 right
    * @param convex convex (true) or concave (false)
    * @param depthRatio ratio of fresnel ridge height to half thickness, for fresnel only
    * @param refractiveIndex ratio of external wave speed to internal wave speed
@@ -520,10 +533,10 @@ async function main() {
 
     // equations for lens shapes
     const lensShapes = Object.freeze({
-      ellipticalnormal:  (i, j) => (i * i + (aspectRatio * j) ** 2) < r * r,
+      ellipticalnormal: (i, j) => (i * i + (aspectRatio * j) ** 2) < r * r,
       ellipticalfresnel: (i, j) => (i * i) % (r * r * (1 - (1 - depthRatioInv) ** 2)) + (aspectRatio * (j - fresnelOffset)) ** 2 < r * r,
-      parabolicnormal:   (i, j) => (i * i / a) + j - (convex ? 20 : 0) < lensWidth,
-      parabolicfresnel:  (i, j) => (i * i / a) % (lensWidth * depthRatioInv) + (j - fresnelOffset) < lensWidth,
+      parabolicnormal: (i, j) => (i * i / a) + j - (convex ? 20 : 0) < lensWidth,
+      parabolicfresnel: (i, j) => (i * i / a) % (lensWidth * depthRatioInv) + (j - fresnelOffset) < lensWidth,
     });
 
     for (let i = -yLimit; i < yLimit; i++) {
@@ -573,7 +586,7 @@ async function main() {
   // Settings and interaction
   {
     ui.cClear.addEventListener("click", () => {
-      resetWaveSpeed();
+      resetCBuffer();
       activePreset = null;
     });
     ui.reInit.addEventListener("click", () => resetState());
@@ -625,7 +638,7 @@ async function main() {
 
       if (waveOn) {
         device.queue.writeBuffer(timeBuffer, 0, new Float32Array([0]));
-        uniformData[UwaveOn] = 1 - uniformData[UwaveOn];
+        uniformData[UwaveOn] = 1;
         if (uniformData[Uamp] < ampVal) {
           uniformData[Uamp] = ampVal;
         }
@@ -634,13 +647,14 @@ async function main() {
 
     // Preset settings
     function updatePreset() {
-      resetWaveSpeed();
+      resetCBuffer(); // disable to add
       const ol = parseInt(ui.offsetLeftSlider.value);
       switch (activePreset) {
-        case Preset.doubleSlit:
-          doubleSlit(
+        case Preset.slits:
+          slitInterference(
             parseInt(ui.dsWidthSlider.value),
             parseInt(ui.dsSpacingSlider.value),
+            parseInt(ui.dsNumSlits.value),
             ol
           );
           break;
@@ -657,7 +671,7 @@ async function main() {
           const curve = options.lensCurve == "convex";
           const ir = parseFloat(ui.lensIRSlider.value);
           const dr = parseFloat(ui.lensDRSlider.value);
-          
+
           lensGenerator(config, r, ar, dir, curve, dr, ir, ol);
           break;
         case Preset.circularReflector:
@@ -682,7 +696,7 @@ async function main() {
       ui.lensSettings.classList.add("hidden");
       ui.rSettings.classList.add("hidden");
       switch (Preset[ui.preset.value]) {
-        case Preset.doubleSlit:
+        case Preset.slits:
           ui.dsSettings.classList.remove("hidden");
           break;
         case Preset.lens:
@@ -707,6 +721,7 @@ async function main() {
     ui.offsetLeftSlider.addOutput(ui.offsetLeftValue);
     ui.dsSpacingSlider.addOutput(ui.dsSpacingValue);
     ui.dsWidthSlider.addOutput(ui.dsWidthValue);
+    ui.dsNumSlits.addOutput();
     ui.lensRadiusSlider.addOutput(ui.lensRadiusValue);
     ui.lensARSlider.addOutput(ui.lensARValue, 1);
     ui.lensIRSlider.addOutput(ui.lensIRValue, 2);
@@ -762,7 +777,7 @@ async function main() {
     ui.whiteRefractSlider.addOutput(ui.whiteRefractValue, 2);
     ui.imageApply.addEventListener("click", () => {
       if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
-      resetWaveSpeed();
+      resetCBuffer();
       const file = ui.imageUpload.files[0];
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -815,12 +830,25 @@ async function main() {
 
 
   // Simulation Loop
+
+  const filterStrength = 10;
+  let rafId;
+  let jsTime = 0, lastFrameTime = performance.now(), deltaTime = 10, fps = 0;
+
   let [bufferPrev, bufferNow, bufferNext] = [stateBuffer0, stateBuffer1, stateBuffer2];
+
   function frame() {
+    // now *= 1e-3;
+    const startTime = performance.now();
+    deltaTime += (startTime - lastFrameTime - deltaTime) / filterStrength;
+    fps += (1e3 / deltaTime - fps) / filterStrength;
+    lastFrameTime = startTime;
+
+
     // ease the wave off when disabled
     if (!waveOn && uniformData[Uamp] > 0) {
-      uniformData[Uamp] -= decayRate / uniformData[Uwavelength] * ampVal * dtPerFrame;
-      if (uniformData[Uamp] < 0) {
+      uniformData[Uamp] -= decayRate * ampVal; //Math.min(0.2, decayRate / uniformData[Uwavelength] * ampVal * dtPerFrame);
+      if (uniformData[Uamp] <= 0) {
         uniformData[Uamp] = 0;
         uniformData[UwaveOn] = 0;
       }
@@ -829,7 +857,7 @@ async function main() {
     device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
 
     const commandEncoder = device.createCommandEncoder();
-    // update time for wave generators
+    // run several timesteps per frame
     for (let i = 0; i < dtPerFrame; i++) {
       const computePass = commandEncoder.beginComputePass();
       computePass.setPipeline(computePipeline);
@@ -855,12 +883,21 @@ async function main() {
     renderPass.end();
 
     device.queue.submit([commandEncoder.finish()]);
-    // }
+
+    jsTime += (performance.now() - startTime - jsTime) / filterStrength;
 
     //setTimeout(frame, 500);
-    if (!exit) requestAnimationFrame(frame);
+    rafId = requestAnimationFrame(frame);
   }
-  if (!exit) frame();
+  rafId = requestAnimationFrame(frame);
+
+  const intID = setInterval(() => {
+    ui.fps.textContent = fps.toFixed(1);
+    ui.jsTime.textContent = jsTime.toFixed(2);
+    ui.frameTime.textContent = deltaTime.toFixed(1);
+    // ui.gpuTime.textContent = deltaTime - jsTime;
+  }, 100);
+
 
   // Other event listeners
   ui.collapse.onclick = () => {
@@ -873,9 +910,11 @@ async function main() {
       ui.collapse.classList.add("inactive");
     }
   };
-  // window.onresize = () => setTimeout(() => location.reload(), 100);
+  
   window.onresize = () => {
     exit = true;
+    clearInterval(intID);
+    cancelAnimationFrame(rafId);
     main();
   };
 }
