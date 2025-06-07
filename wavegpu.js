@@ -82,8 +82,6 @@ async function main() {
   const decayRate = 0.1; // decay rate when wave is disabled
   let ampVal = 1;
 
-  let exit = false;
-
   // WebGPU Setup
   const canvas = document.getElementById("canvas");
   canvas.width = width;
@@ -177,18 +175,18 @@ async function main() {
 
   // Uniform Buffer
   // Layout: [width, height, dt, display, time, boundaryAbsorb, wavelength, amp, type(0=plane,1=point), waveOn, brightnessCrossSection, brightnessFilterStrength]
-  const Uwidth = 0;
-  const Uheight = 1;
-  const Udt = 2;
-  const Udisplay = 3;
+  const uWidth = 0;
+  const uHeight = 1;
+  const uDt = 2;
+  const uDisplay = 3;
   // const Utime = 4;
-  const UboundaryAbsorb = 5;
-  const Uwavelength = 6;
-  const Uamp = 7;
-  const Utype = 8;
-  const UwaveOn = 9;
-  const UbrightnessCrossSection = 10;
-  const UbrightnessFilterStrength = 11;
+  const uBoundAbsorb = 5;
+  const uWavelength = 6;
+  const uAmp = 7;
+  const uType = 8;
+  const uWaveOn = 9;
+  const uBrightnessCrossSection = 10;
+  const uBrightnessFilterStrength = 11;
   const uniformData = new Float32Array([width, height, dt,
     displayType[ui.displayType.value],
     0,
@@ -422,16 +420,16 @@ async function main() {
       let width = i32(uniforms.width);
       let index = y * width + x;
       
-      let west = index - 1;
-      let east = index + 1;
-      let north = index - width;
-      let south = index + width;
+      let westSpeed = waveSpeed[index - 1];
+      let eastSpeed = waveSpeed[index + 1];
+      let northSpeed = waveSpeed[index - width];
+      let southSpeed = waveSpeed[index + width];
       
       // Render barriers and large changes in c
-      if ((waveSpeed[index] <= 0
-           || abs(waveSpeed[north] - waveSpeed[south]) > 0.02
-           || abs(waveSpeed[east] - waveSpeed[west]) > 0.02
-          ) && uniforms.display <= 1
+      if (uniforms.display <= 1 && (waveSpeed[index] <= 0
+           || ((northSpeed > 0 && southSpeed > 0) && abs(northSpeed - southSpeed) > 0.02)
+           || ((eastSpeed > 0 && westSpeed > 0) && abs(eastSpeed - westSpeed) > 0.02)
+          )
         ) {
         return vec4<f32>(1.0);
       }
@@ -497,7 +495,7 @@ async function main() {
   function slitInterference(slitWidth = 20, spacing = 200, nSlits = 2, offsetLeft = 200) {
     const halfSpacing = Math.round(spacing / 2);
     const radius = Math.round(slitWidth / 2);
-    
+
     for (let i = 0; i < halfHeight; i++) {
       // symmetric around half height
       if ((Math.abs((i + ((nSlits % 2 == 0) ? 0 : halfSpacing)) % spacing - halfSpacing) > radius) // fill outside of holes
@@ -594,13 +592,13 @@ async function main() {
     ui.displayType.addEventListener("change", () => {
       const mode = ui.displayType.value;
       const modeVal = mode === "wave" ? 0 : mode === "speed" ? 1 : 2;
-      uniformData[Udisplay] = modeVal;
+      uniformData[uDisplay] = modeVal;
       // device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
     });
 
     // dt
     ui.dt.addEventListener("input", () => {
-      ui.dtValue.textContent = dt = uniformData[Udt] = parseFloat(ui.dt.value);
+      ui.dtValue.textContent = dt = uniformData[uDt] = parseFloat(ui.dt.value);
     });
 
     // Simulation speed
@@ -610,25 +608,25 @@ async function main() {
 
     // ABC condition toggle
     ui.boundaryAbsorb.addEventListener("click", () => {
-      uniformData[UboundaryAbsorb] = ui.boundaryAbsorb.checked ? 1 : 0;
+      uniformData[uBoundAbsorb] = ui.boundaryAbsorb.checked ? 1 : 0;
     });
 
     // Wave generator wavelength
     ui.wavelengthSlider.addEventListener("input", () => {
-      uniformData[Uwavelength] = ui.wavelengthValue.textContent = parseInt(ui.wavelengthSlider.value);
+      uniformData[uWavelength] = ui.wavelengthValue.textContent = parseInt(ui.wavelengthSlider.value);
     });
     // Wave generator amplitude
     ui.amplitudeSlider.addEventListener("input", () => {
-      uniformData[Uamp] = ui.amplitudeValue.textContent = ampVal = parseFloat(ui.amplitudeSlider.value);
+      uniformData[uAmp] = ui.amplitudeValue.textContent = ampVal = parseFloat(ui.amplitudeSlider.value);
     });
 
     // Wave generator types
     ui.planeWave.addEventListener("input", () => {
-      uniformData[Utype] = 0;
+      uniformData[uType] = 0;
       resetState();
     });
     ui.pointSource.addEventListener("input", () => {
-      uniformData[Utype] = 1;
+      uniformData[uType] = 1;
       resetState();
     });
 
@@ -638,9 +636,9 @@ async function main() {
 
       if (waveOn) {
         device.queue.writeBuffer(timeBuffer, 0, new Float32Array([0]));
-        uniformData[UwaveOn] = 1;
-        if (uniformData[Uamp] < ampVal) {
-          uniformData[Uamp] = ampVal;
+        uniformData[uWaveOn] = 1;
+        if (uniformData[uAmp] < ampVal) {
+          uniformData[uAmp] = ampVal;
         }
       }
     });
@@ -711,10 +709,10 @@ async function main() {
       }
     });
 
-    HTMLElement.prototype.addOutput = function (valueOut, fixedPrecision = 0) {
+    HTMLElement.prototype.addOutput = function (valueOut, fixedPrecision = 0, update = true) {
       this.addEventListener("input", () => {
         if (valueOut) valueOut.textContent = fixedPrecision > 0 ? parseFloat(this.value).toFixed(fixedPrecision) : parseInt(this.value);
-        updatePreset();
+        if (update) updatePreset();
       });
     }
 
@@ -742,39 +740,106 @@ async function main() {
   {
     let isDrawing = false;
     let newC = null;
-    canvas.addEventListener("mousedown", (event) => {
-      if (uniformData[Udisplay] < 2) {
+    let lastPos = null; // { x, y } of last drawn point
+
+    canvas.addEventListener("pointerdown", (event) => {
+      if (uniformData[uDisplay] < 2) {
         isDrawing = true;
-        placeBarrier(event);
+        lastPos = null;
+        handlePointer(event);
       }
     });
+
     canvas.addEventListener("pointermove", (event) => {
-      if (isDrawing) {
-        event.getCoalescedEvents().forEach((event) => placeBarrier(event));
-      }
+      if (!isDrawing) return;
+      event.getCoalescedEvents().forEach(e => handlePointer(e));
     });
-    canvas.addEventListener("mouseup", () => {
+
+    canvas.addEventListener("pointerup", () => {
       isDrawing = false;
       newC = null;
+      lastPos = null;
     });
-    function placeBarrier(event) {
+
+    canvas.addEventListener("pointerleave", () => {
+      isDrawing = false;
+      newC = null;
+      lastPos = null;
+    });
+
+    function handlePointer(event) {
       const rect = canvas.getBoundingClientRect();
+      // convert to grid coordinates
       const x = Math.floor(event.clientX - rect.left);
-      const y = height - Math.floor(event.clientY - rect.top);
+      const y = Math.floor(rect.bottom - event.clientY);
+
+      // interpolate from lastPos to (x,y)
+      if (lastPos) {
+        const dx = x - lastPos.x;
+        const dy = y - lastPos.y;
+        const dist = Math.hypot(dx, dy);
+        const steps = Math.ceil(dist);
+        for (let i = 1; i <= steps; i++) {
+          const ix = Math.round(lastPos.x + dx * (i / steps));
+          const iy = Math.round(lastPos.y + dy * (i / steps));
+          placeBarrier3x3At(ix, iy);
+        }
+      } else {
+        // first point
+        placeBarrier3x3At(x, y);
+      }
+
+      // remember for next interpolation
+      lastPos = { x, y };
+    }
+
+    function placeBarrier3x3At(x, y) {
+      // check point in bounds
+      if (x < 0 || x >= width || y < 0 || y >= height) return;
+
       const index = y * width + x;
-      if (newC === null) newC = cArray[index] === initC ? (ui.drawnBarrierAbsorb.checked ? -1 : 0) : initC;
-      cArray[index] = newC;
-      const indexOffsets = [0, 1, -1, width, -width, width + 1, width - 1, -width + 1, -width - 1];
-      indexOffsets.forEach((offset) => {
-        const totalOffset = index + offset;
-        device.queue.writeBuffer(cBuffer, totalOffset * Float32Array.BYTES_PER_ELEMENT, new Float32Array([newC]))
-        writeWaveState(totalOffset, new Float32Array([initU]));
-      });
+
+      // initialize newC once per stroke
+      if (newC === null) {
+        newC = (cArray[index] === initC)
+          ? (ui.drawnBarrierAbsorb.checked ? -1 : 0)
+          : initC;
+      }
+
+      // write center cell
+      writeCell(index, newC);
+
+      // relative neighbors as (dx,dy)
+      const neighborOffsets = [
+        [1, 0], [-1, 0],
+        [0, 1], [0, -1],
+        [1, 1], [1, -1],
+        [-1, 1], [-1, -1]
+      ];
+
+      // fill all 8 neighbors
+      for (const [dx, dy] of neighborOffsets) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const nIdx = ny * width + nx;
+        writeCell(nIdx, newC);
+      }
+    }
+
+    function writeCell(index, value) {
+      cArray[index] = value;
+      device.queue.writeBuffer(
+        cBuffer,
+        index * Float32Array.BYTES_PER_ELEMENT,
+        new Float32Array([value])
+      );
+      writeWaveState(index, new Float32Array([initU]));
     }
 
     // Image Upload & Processing
-    ui.blackRefractSlider.addOutput(ui.blackRefractValue, 2);
-    ui.whiteRefractSlider.addOutput(ui.whiteRefractValue, 2);
+    ui.blackRefractSlider.addOutput(ui.blackRefractValue, 2, false);
+    ui.whiteRefractSlider.addOutput(ui.whiteRefractValue, 2, false);
     ui.imageApply.addEventListener("click", () => {
       if (!ui.imageUpload.files || ui.imageUpload.files.length === 0) return;
       resetCBuffer();
@@ -846,11 +911,11 @@ async function main() {
 
 
     // ease the wave off when disabled
-    if (!waveOn && uniformData[Uamp] > 0) {
-      uniformData[Uamp] -= decayRate * ampVal; //Math.min(0.2, decayRate / uniformData[Uwavelength] * ampVal * dtPerFrame);
-      if (uniformData[Uamp] <= 0) {
-        uniformData[Uamp] = 0;
-        uniformData[UwaveOn] = 0;
+    if (!waveOn && uniformData[uAmp] > 0) {
+      uniformData[uAmp] -= decayRate * ampVal; //Math.min(0.2, decayRate / uniformData[Uwavelength] * ampVal * dtPerFrame);
+      if (uniformData[uAmp] <= 0) {
+        uniformData[uAmp] = 0;
+        uniformData[uWaveOn] = 0;
       }
     }
 
@@ -910,7 +975,7 @@ async function main() {
       ui.collapse.classList.add("inactive");
     }
   };
-  
+
   window.onresize = () => {
     exit = true;
     clearInterval(intID);
